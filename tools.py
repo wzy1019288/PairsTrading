@@ -17,6 +17,14 @@ import warnings
 warnings.filterwarnings('ignore')
 
 
+####################################################################
+# settings
+# -------------------------
+name1 = 'COLPAL.NS'
+name2 = 'INDIGO.NS'
+
+####################################################################
+
 
 def regression(xdata,ydata):
     flag=0
@@ -64,6 +72,14 @@ def dynamic_regression(xdata,ydata,delta=1e-4):
     return slope,intercept,ydata.values-slope*xdata.values-intercept
 
 def test_stationarity(residuals):
+    '''
+    ADF test
+
+    Δy_{t} = η*y_{t-1} + β*Δy_{t-1} + ... 回归
+
+    y_{t-1} 的 t_value < 临界值，拒绝原假设，平稳（不存在单位根） 
+    '''
+
     # Augmenting 1-period lag and 1 period lag of delta of lag into the dataset
     adf_data=pd.DataFrame(residuals)
     adf_data.columns=['y']
@@ -79,11 +95,21 @@ def test_stationarity(residuals):
     #Auto regressing the residuals with lag1, drift constant and lagged 1 delta (delta_et-1)
     adf_regressor_model=sm.OLS(target_y,adf_data)
     adf_regressor=adf_regressor_model.fit()
-    
+
     # Returning the results
     return adf_regressor
 
 def test_significance(xdata,ydata,residuals):
+    '''
+    ECM
+
+    ecm_{t-1} = y_{t-1} - a0 - a1*x_{t-1}
+
+    Δy_{t} = β*Δx_{t} + gamma*ecm_{t-1} + ... 回归
+    
+    gamma 称为调整系数
+    '''
+
     # Augmenting 1-period lagged residual into the dataset
     residuals=pd.DataFrame(residuals)
     ecm_data=pd.DataFrame(residuals.shift(1))
@@ -106,79 +132,99 @@ def test_significance(xdata,ydata,residuals):
     # Returning the results of the regression
     return ecm_regressor1  
 
-def cointegration_test(xdata,ydata,stat_value_ci,sig_value_ci,s1,s2):
-    
+def cointegration_test(xdata,ydata,stat_value_ci,sig_value_ci,s1,s2,print_summary=False):
     
     adf_critical_values1={'0.99':-3.46, '0.95':-2.88,'0.9':-2.57}
     adf_critical_values2={'0.99':-3.44,'0.95':-2.87,'0.9':-2.57}
     adf_critical_values3={'0.99':-3.43,'0.95':-2.86,'0.9':-2.57}
-    
+
+    # 回归求得残差
     coef1,intercept1,residuals1=regression(xdata,ydata)
     coef2,intercept2,residuals2=regression(ydata,xdata)
     flag=0 
     flag1=0
     
-    stat_test=test_stationarity(residuals1)
+    # 平稳性检验(ADF): 对残差进行自回归，检验残差是否平稳 （残差是否存在单位根）
+    stat_test=test_stationarity(residuals=residuals1)
     print("\nThe following is the result of the Augmented Dickey Fuller test")
-    print(stat_test.summary())
+    if print_summary:
+        print(stat_test.summary())
     if len(residuals1) > 500:
         if abs(stat_test.tvalues['y-1']) > abs(adf_critical_values3[str(stat_value_ci)]):
-            print("\nThe t-statistic value of the unit root coefficient is {} and the null hypothesis of a unit root is rejected. Hence, no unit root exists and residuals are stationary".format(stat_test.tvalues['y-1']))
+            print('通过平稳性检验!\nt_value={}, 临界值={}\n'.format(stat_test.tvalues['y-1'], adf_critical_values3[str(stat_value_ci)]))
+            # print("\nThe t-statistic value of the unit root coefficient is {} and the null hypothesis of a unit root is rejected. Hence, no unit root exists and residuals are stationary".format(stat_test.tvalues['y-1']))
             #pass
         else:
-            print("\nThe t-statistic value of the unit root coefficient is {} and the null hypothesis of a unit root is accepted. Hence, a unit root exists and residuals are not stationary and Error Correction Model is not checked for".format(stat_test.tvalues['y-1']))
+            print('【FAIL】未通过平稳性检验!\nt_value={}, 临界值={}\n'.format(stat_test.tvalues['y-1'], adf_critical_values3[str(stat_value_ci)]))
+            # print("\nThe t-statistic value of the unit root coefficient is {} and the null hypothesis of a unit root is accepted. Hence, a unit root exists and residuals are not stationary and Error Correction Model is not checked for".format(stat_test.tvalues['y-1']))
             return -1
             
     elif len(residuals1) > 250:
         if abs(stat_test.tvalues['y-1']) > abs(adf_critical_values2[str(stat_value_ci)]):
-            print("\nThe t-statistic value of the unit root coefficient is {} and the null hypothesis of a unit root is rejected. Hence, no unit root exists and residuals are stationary".format(stat_test.tvalues['y-1']))
+            print('通过平稳性检验!\nt_value={}, 临界值={}\n'.format(stat_test.tvalues['y-1'], adf_critical_values3[str(stat_value_ci)]))
+            # print("\nThe t-statistic value of the unit root coefficient is {} and the null hypothesis of a unit root is rejected. Hence, no unit root exists and residuals are stationary".format(stat_test.tvalues['y-1']))
             #pass
         else:
-            print("\nThe t-statistic value of the unit root coefficient is {} and the null hypothesis of a unit root is accepted. Hence, a unit root exists and residuals are not stationary and Error Correction Model is not checked for".format(stat_test.tvalues['y-1']))
+            print('【FAIL】未通过平稳性检验!\nt_value={}, 临界值={}\n'.format(stat_test.tvalues['y-1'], adf_critical_values3[str(stat_value_ci)]))
+            # print("\nThe t-statistic value of the unit root coefficient is {} and the null hypothesis of a unit root is accepted. Hence, a unit root exists and residuals are not stationary and Error Correction Model is not checked for".format(stat_test.tvalues['y-1']))
             #return -1
         
     elif len(residuals1) > 100:
         if abs(stat_test.tvalues['y-1']) > abs(adf_critical_values1[str(stat_value_ci)]):
-            print("\nThe t-statistic value of the unit root coefficient is {} and the null hypothesis of a unit root is rejected. Hence, no unit root exists and residuals are stationary".format(stat_test.tvalues['y-1']))
+            print('通过平稳性检验!\nt_value={}, 临界值={}\n'.format(stat_test.tvalues['y-1'], adf_critical_values3[str(stat_value_ci)]))
+            # print("\nThe t-statistic value of the unit root coefficient is {} and the null hypothesis of a unit root is rejected. Hence, no unit root exists and residuals are stationary".format(stat_test.tvalues['y-1']))
             #pass
         else:
-            print("\nThe t-statistic value of the unit root coefficient is {} and the null hypothesis of a unit root is accepted. Hence, a unit root exists and residuals are not stationary and Error Correction Model is not checked for".format(stat_test.tvalues['y-1']))  
+            print('【FAIL】未通过平稳性检验!\nt_value={}, 临界值={}\n'.format(stat_test.tvalues['y-1'], adf_critical_values3[str(stat_value_ci)]))
+            # print("\nThe t-statistic value of the unit root coefficient is {} and the null hypothesis of a unit root is accepted. Hence, a unit root exists and residuals are not stationary and Error Correction Model is not checked for".format(stat_test.tvalues['y-1']))  
             return -1
-            
     
+    ## 无关的一提
+    ## 若通过平稳性检验，则说明x和y存在一个长期的均衡关系，但是短期内会出现非均衡状态，
+    ## 那么x和y必须进行动态修正和调整，使得非均衡状态尽量恢复到均衡状态。
+
+    # 显著性测试(ECM)
     sig_1=test_significance(xdata,ydata,residuals1)
     sig_2=test_significance(ydata,xdata,residuals2)
         
         
     print("\nThe following is the regression result of the Error Correction model when {} is the independent and {} is the dependent variable".format(s1,s2))
-    print(sig_1.summary())
+    if print_summary:
+        print(sig_1.summary())
     
     critical_value=abs(t.ppf(sig_value_ci+0.5*(1-sig_value_ci),len(residuals1)))
     if abs(sig_1.tvalues['et-1']) > critical_value:
-        print("\nThe t-statistic value of the lagged residual coefficient in the error correction model is {} against a critical value of {} and the null hypothesis of the coefficient not being significant is rejected. Hence, cointegration is significant".format(sig_1.tvalues['et-1'],critical_value))
+        print('【1】通过显著性测试!\nt_value={}, 临界值={}\n'.format(sig_1.tvalues['et-1'], critical_value))
+        # print("\nThe t-statistic value of the lagged residual coefficient in the error correction model is {} against a critical value of {} and the null hypothesis of the coefficient not being significant is rejected. Hence, cointegration is significant".format(sig_1.tvalues['et-1'],critical_value))
         
     else:
-        print("\nThe t-statistic value of the lagged residual coefficient in the error correction model is {} against a critical value of {} and the null hypothesis of the coefficient not being significant is accepted. Hence, cointegration is not significant".format(sig_1.tvalues['et-1'],critical_value))
+        print('【1】未通过显著性测试!\nt_value={}, 临界值={}\n'.format(sig_1.tvalues['et-1'], critical_value))
+        # print("\nThe t-statistic value of the lagged residual coefficient in the error correction model is {} against a critical value of {} and the null hypothesis of the coefficient not being significant is accepted. Hence, cointegration is not significant".format(sig_1.tvalues['et-1'],critical_value))
         flag1+=1        
        
     print("\nThe following is the regression result of the Error Correction model when {} is the independent and {} is the dependent variable".format(s2,s1))
-    print(sig_2.summary())
+    if print_summary:
+        print(sig_2.summary())
     critical_value=abs(t.ppf(sig_value_ci+0.5*(1-sig_value_ci),len(residuals2)))
     if abs(sig_2.tvalues['et-1']) > critical_value:
-        print("\nThe t-statistic value of the lagged residual coefficient in the error correction model is {} against a critical value of {} and the null hypothesis of the coefficient not being significant is rejected. Hence, cointegration is significant".format(sig_2.tvalues['et-1'],critical_value))   
+        print('【2】通过显著性测试!\nt_value={}, 临界值={}\n'.format(sig_1.tvalues['et-1'], critical_value))
+        # print("\nThe t-statistic value of the lagged residual coefficient in the error correction model is {} against a critical value of {} and the null hypothesis of the coefficient not being significant is rejected. Hence, cointegration is significant".format(sig_2.tvalues['et-1'],critical_value))   
     else:
-        print("\nThe t-statistic value of the lagged residual coefficient in the error correction model is {} against a critical value of {} and the null hypothesis of the coefficient not being significant is accepted. Hence, cointegration is not significant".format(sig_2.tvalues['et-1'],critical_value))
+        print('【2】未通过显著性测试!\nt_value={}, 临界值={}\n'.format(sig_1.tvalues['et-1'], critical_value))
+        # print("\nThe t-statistic value of the lagged residual coefficient in the error correction model is {} against a critical value of {} and the null hypothesis of the coefficient not being significant is accepted. Hence, cointegration is not significant".format(sig_2.tvalues['et-1'],critical_value))
         flag1+=1
 
     if flag1 == 2:
+        print('【FAIL】二者都未通过显著性测试!')
         return -2
     
     if abs(sig_1.tvalues['et-1']) < abs(sig_2.tvalues['et-1']):
-        print("\nFor the cointegration problem, the independent variable in regression between the asset classes is {} and the dependent variable is {}".format(s1,s2))
+        print('\n对于这个协整问题，自变量x是{}，因变量y是{}'.format(s1,s2))
+        # print("\nFor the cointegration problem, the independent variable in regression between the asset classes is {} and the dependent variable is {}".format(s1,s2))
         return 2
     else:
-        print("\nFor the cointegration problem, the independent variable in regression between the asset classes is {} and the dependent variable is {}".format(s2,s1))
-        
+        print('\n对于这个协整问题，自变量x是{}，因变量y是{}'.format(s2,s1))
+        # print("\nFor the cointegration problem, the independent variable in regression between the asset classes is {} and the dependent variable is {}".format(s2,s1))
         return 1
 
 def robustness(xdata,ydata,long_xdata,long_ydata,ci):
@@ -194,11 +240,12 @@ def robustness(xdata,ydata,long_xdata,long_ydata,ci):
 
     t_statistic,p_value=ttest_ind(resid,long_resid)
     
-    if abs(t_statistic) < t.ppf(0.95,len(xdata)):
+    if abs(t_statistic) < t.ppf(ci,len(xdata)):
         print ("\nThe t-statistic is {} and the spread over 2 periods are similar according to t-statistic test".format(t_statistic))
+        print ("通过稳健性测试!")
     else:
         print ("\nThe t-statistic is {} and the spread over 2 periods are not similar according to t-statistic test".format(t_statistic))
-        print ("As co-integration is not significant, consider the use of Kalman Filters")
+        print ("【FAIL】未通过稳健性测试! As co-integration is not significant, consider the use of Kalman Filters")
 
 def build_strategy(residuals,kalman=False,delta=1e-4,display=True):
     
@@ -1083,10 +1130,12 @@ def backtest(df,returns,dates,rfr,display=True,window=125):
 def trading_algorithm(
         name1, name2,
         start='2016/05/30', end='2017/05/30',
-        adf_ci=0.95, sig_test_ci=0.95
-
+        adf_ci=0.95, sig_test_ci=0.95,
+        robust_start='2014/05/30', robust_end='2016/05/30',
+        rob_ci=0.95,
+        if_train=True, if_set_trading_params=True
 ):
-    print("\nTwo asset classes for cointegration: {}\n".format(name1, name2))
+    print("\nTwo asset classes for cointegration: {}, {}\n".format(name1, name2))
 
     asset1=pd.read_csv('data/{}.csv'.format(name1),usecols=['Date','Adj Close'],parse_dates=[0])
     asset2=pd.read_csv('data/{}.csv'.format(name2),usecols=['Date','Adj Close'],parse_dates=[0])
@@ -1099,42 +1148,63 @@ def trading_algorithm(
     end=pd.to_datetime(end)
     pairs_training=pair[pair['Date'] > start]
     pairs_training=pairs_training[pairs_training['Date'] < end]
-    
+
     print('\n The confidence interval for the ADF test: {}\n'.format(adf_ci))
     print('\n The confidence interval for the cointegration significance test: {}\n'.format(sig_test_ci))
     adf_ci=float(adf_ci)
     sig_test_ci=float(sig_test_ci)
     
-    flag3=cointegration_test(pairs_training['xdata'],pairs_training['ydata'],adf_ci,sig_test_ci,name1,name2,)
+    # 协整性测试
+    flag3=cointegration_test(
+        xdata=pairs_training['xdata'],
+        ydata=pairs_training['ydata'],
+        stat_value_ci=adf_ci,
+        sig_value_ci=sig_test_ci,
+        s1=name1,
+        s2=name2,
+        print_summary=False
+        )
     if flag3 == 2:
-            pairs_training.columns=['Date','xdata','ydata']
-            pair.columns=['Date','xdata','ydata']
-            temp=name1
-            name1=name2
-            name2=temp
+        pairs_training.columns=['Date','xdata','ydata']
+        pair.columns=['Date','xdata','ydata']
+        temp=name1
+        name1=name2
+        name2=temp
 
     if  flag3==1 or flag3==2: 
-        print ("\nEnter a larger date range to asses the robustness of the cointegration")
-        date1=pd.to_datetime(input('Start Date: '))
-        date2=pd.to_datetime(input('End Date: '))
-        rob_ci=float(input("Enter a confidence interval for robustness test: "))
+
+        # 协整的稳健性测试
+        print ("\nA larger date range to asses the robustness of the cointegration from {} to {}\n".format(robust_start, robust_end))
+        date1=pd.to_datetime(robust_start)
+        date2=pd.to_datetime(robust_end)
+
+        print('\n The confidence interval for the robustness test: {}\n'.format(rob_ci))
+        rob_ci=float(rob_ci)
         robust_set=pair[pair['Date'] > date1]
         robust_set=robust_set[robust_set['Date'] < date2]
-        robustness(pairs_training['xdata'],pairs_training['ydata'],robust_set['xdata'],robust_set['ydata'],rob_ci)
+        robustness(
+            xdata=pairs_training['xdata'],
+            ydata=pairs_training['ydata'],
+            long_xdata=robust_set['xdata'],
+            long_ydata=robust_set['ydata'],
+            ci=rob_ci
+            )
         
         print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
-        #
-        if int(input("\nContinue with strategy fitting on training data: Yes-1, No-0: ")) == 1:
-            flag1=int(input("Calculate residuals using Kalman Filters-1 or Linear Regression-0: "))
-            flag2=int(input("Calculate Ornstein Uhlenbeck parameters using Kalman Filters-1 or Linear Regression-0: "))
+        # Continue with strategy fitting on training data
+        if if_train:
+            # Calculate residuals using Kalman Filters-1 or Linear Regression-0
+            flag1=int(0)
+            # Calculate Ornstein Uhlenbeck parameters using Kalman Filters-1 or Linear Regression-0
+            flag2=int(0)
             
             if flag1 == 1:
-                delta_r=float(input("Enter Delta value for Kalman Filter for computing Cointegration Weight. Default is 0.0001: "))
+                # Enter Delta value for Kalman Filter for computing Cointegration Weight. Default is 0.0001
+                delta_r=float(0.0001)
                 coef_tr,intercept_tr,spread_tr=dynamic_regression(pairs_training['xdata'],pairs_training['ydata'],delta_r)
                 
             else:
                 coef_tr,intercept_tr,spread_tr=regression(pairs_training['xdata'],pairs_training['ydata'])
-            
             
             print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
             print("\nThe cointegration weights and the intercept for the trading strategy are as follows: \n")
@@ -1161,7 +1231,8 @@ def trading_algorithm(
                 
             print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
             if flag2 == 1:
-                delta_ou=float(input("Enter Delta value for Kalman Filter for fitting to OU process. Default is 0.0001: "))
+                # Enter Delta value for Kalman Filter for fitting to OU process. Default is 0.0001
+                delta_ou=float(0.0001)
                 mean_tr,diffeq_tr=build_strategy(spread_tr,True,delta_ou)
             else:
                 mean_tr,diffeq_tr=build_strategy(spread_tr)
@@ -1174,17 +1245,25 @@ def trading_algorithm(
             spread_tr=spread_tr[-len(mean_tr):]
             pairs_tr=pairs_training[-len(mean_tr):]
             coint_tr=np.vstack([np.ones(len(coef_tr)),coef_tr]).T
+            
             print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
-            #
-            if int(input("\nSimulate trading on training data using the fitted parameters: Yes-1, No-0: ")) ==1:
+            # Simulate trading on training data using the fitted parameters: Yes-1, No-0
+            if if_set_trading_params:
                 print ("Enter the Following trading parameters:")
-                entry_point=float(input("Number of standard deviations from the mean at which trade should be initiated: "))
-                slippage=float(input("The permissible slippage observed on residual spread: [Enter -999 for no slippage consideration]: "))
-                stoploss=float(input("The permissible stoploss observed on residual spread: [Enter -999 for no stoploss consideration]: "))
-                comm_short=float(input("The commission on executing a short trade: [Enter 0 for no commission consideration]: "))
-                comm_long=float(input("The commission on executing a long trade: [Enter 0 for no commission consideration]: "))
-                rfr=float(input("Risk free rate: "))
-                max_trade_exit=int(input("Maximum number of days a trade can last post the trade initiation: [Enter -999 for no maximum trade duration consideration]: "))
+                # Number of standard deviations from the mean at which trade should be initiated
+                entry_point=float(0.7)
+                # The permissible slippage observed on residual spread: [Enter -999 for no slippage consideration]
+                slippage=float(0.1)
+                # The permissible stoploss observed on residual spread: [Enter -999 for no stoploss consideration]
+                stoploss=float(0.3)
+                # The commission on executing a short trade: [Enter 0 for no commission consideration]
+                comm_short=float(0.0002)
+                # The commission on executing a long trade: [Enter 0 for no commission consideration]
+                comm_long=float(0.0002)
+                # Risk free rate
+                rfr=float(0.0685)
+                # Maximum number of days a trade can last post the trade initiation: [Enter -999 for no maximum trade duration consideration]
+                max_trade_exit=int(45)
                 print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
                 print ("\n The trading strategy on the training period is \n")
                 #
@@ -1192,11 +1271,17 @@ def trading_algorithm(
                 trade_ticket_tr=trade_sheet(buy_tr,sell_tr,status_tr,pairs_tr,coint_tr,comm_short,comm_long)
                 print ("Details of Trades executed: ")
                 print (trade_ticket_tr)
+
                 print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
+                # Print backtesting analysis of trading on training data : Yes-1, No-0
                 if int(input("\nPrint backtesting analysis of trading on training data : Yes-1, No-0:")) ==1:
                 #if 1==1:
                     pairs_tr=pairs_tr[-len(returns_tr):]
-                    backtest(trade_ticket_tr,returns_tr,pairs_tr['Date'],rfr)
+                    backtest(
+                        df=trade_ticket_tr,
+                        returns=returns_tr,
+                        dates=pairs_tr['Date'],
+                        rfr=rfr)
                     
                 print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
                 if input("\nCompute Optimized parameters for the training spread: Yes-1, No-0: ") == 1:  
