@@ -1,8 +1,10 @@
 
 # Importing Libraries
+import os
 from sklearn.linear_model import LinearRegression as lm 
 import pandas as pd 
 import numpy as np 
+from itertools import combinations
 import statsmodels.api as sm
 import datetime as date
 import matplotlib.pyplot as plt
@@ -16,236 +18,20 @@ from numpy.linalg import inv
 import warnings
 warnings.filterwarnings('ignore')
 
+# Importing functions
+from stats_func import (
+    regression,
+    dynamic_regression,
+    test_stationarity,
+    test_significance,
+    cointegration_test,
+    robustness
+)
+from optimize_func import (
+    optimize,
+    optimize_delta
+)
 
-####################################################################
-# settings
-# -------------------------
-name1 = 'COLPAL.NS'
-name2 = 'INDIGO.NS'
-
-####################################################################
-
-
-def regression(xdata,ydata):
-    flag=0
-    if isinstance(xdata, pd.DataFrame):
-        flag=1
-    xdat=pd.DataFrame(xdata)
-    xdat['b0']=1
-    xdat=xdat.values
-    ydata=ydata.values
-    n= np.dot(xdat.T,xdat)
-    beta = np.dot(np.dot(inv(n),xdat.T),ydata) 
-    coef=beta[0:-1]
-    intercept=beta[-1]
-    
-    if flag == 1:
-        xdata.drop(labels='b0',axis=1,inplace=True)
-        temp=coef*xdata
-        residuals=ydata-temp.sum(axis=1)-intercept
-    else:
-        coef=coef[0]
-        residuals=ydata-coef*xdata-intercept
-    
-    return coef,intercept,residuals.values
-
-# Producing Dynamic Estimates of Regression Parameters
-def dynamic_regression(xdata,ydata,delta=1e-4):
-    observation_matrix=np.vstack([xdata,np.ones(xdata.shape[0])]).T[:, np.newaxis]
-    
-    #Delta coefficient will determine the frequency of rebalancing estimates
-    trans_cov = delta / (1 - delta) * np.eye(2)
-
-    kf = KalmanFilter(n_dim_obs=1, n_dim_state=2,
-                  initial_state_mean=np.zeros(2),
-                  initial_state_covariance=np.ones((2, 2)),
-                  transition_matrices=np.eye(2),
-                  observation_matrices=observation_matrix,
-                  observation_covariance=1.0,
-                  transition_covariance=trans_cov)
-
-    state_means, state_covs = kf.filter(ydata)
-
-    slope=state_means[:,0]
-    intercept=state_means[:,1]
-
-    return slope,intercept,ydata.values-slope*xdata.values-intercept
-
-def test_stationarity(residuals):
-    '''
-    ADF test
-
-    Δy_{t} = η*y_{t-1} + β*Δy_{t-1} + ... 回归
-
-    y_{t-1} 的 t_value < 临界值，拒绝原假设，平稳（不存在单位根） 
-    '''
-
-    # Augmenting 1-period lag and 1 period lag of delta of lag into the dataset
-    adf_data=pd.DataFrame(residuals)
-    adf_data.columns=['y']
-    adf_data['drift_constant']=1
-    adf_data['y-1']=adf_data['y'].shift(1)
-    adf_data.dropna(inplace=True)
-    adf_data['deltay1']=adf_data['y']-adf_data['y-1']
-    adf_data['deltay-1']=adf_data['deltay1'].shift(1)
-    adf_data.dropna(inplace=True)
-    target_y=pd.DataFrame(adf_data['deltay1'],columns=['deltay1'])
-    adf_data.drop(['y','deltay1'],axis=1,inplace=True)
-    
-    #Auto regressing the residuals with lag1, drift constant and lagged 1 delta (delta_et-1)
-    adf_regressor_model=sm.OLS(target_y,adf_data)
-    adf_regressor=adf_regressor_model.fit()
-
-    # Returning the results
-    return adf_regressor
-
-def test_significance(xdata,ydata,residuals):
-    '''
-    ECM
-
-    ecm_{t-1} = y_{t-1} - a0 - a1*x_{t-1}
-
-    Δy_{t} = β*Δx_{t} + gamma*ecm_{t-1} + ... 回归
-    
-    gamma 称为调整系数
-    '''
-
-    # Augmenting 1-period lagged residual into the dataset
-    residuals=pd.DataFrame(residuals)
-    ecm_data=pd.DataFrame(residuals.shift(1))
-    ecm_data.columns=['et-1']
-    ecm_data['y1']=ydata.values
-    ecm_data['y2']=xdata.values
-    ecm_data['deltay']=ecm_data['y1']-ecm_data['y1'].shift(1)
-    ecm_data['deltax']=ecm_data['y2']-ecm_data['y2'].shift(1)
-    ecm_data.dropna(inplace=True)
-
-    
-    target_y=pd.DataFrame(ecm_data['deltay'])
-    ecm_data.drop(['y1','y2','deltay'],axis=1,inplace=True)
-    
-    
-    # Regressing the delta y against the delta x and the 1 period lagged residuals 
-    ecm_regressor1_model=sm.OLS(target_y,ecm_data)
-    ecm_regressor1=ecm_regressor1_model.fit()
-    
-    # Returning the results of the regression
-    return ecm_regressor1  
-
-def cointegration_test(xdata,ydata,stat_value_ci,sig_value_ci,s1,s2,print_summary=False):
-    
-    adf_critical_values1={'0.99':-3.46, '0.95':-2.88,'0.9':-2.57}
-    adf_critical_values2={'0.99':-3.44,'0.95':-2.87,'0.9':-2.57}
-    adf_critical_values3={'0.99':-3.43,'0.95':-2.86,'0.9':-2.57}
-
-    # 回归求得残差
-    coef1,intercept1,residuals1=regression(xdata,ydata)
-    coef2,intercept2,residuals2=regression(ydata,xdata)
-    flag=0 
-    flag1=0
-    
-    # 平稳性检验(ADF): 对残差进行自回归，检验残差是否平稳 （残差是否存在单位根）
-    stat_test=test_stationarity(residuals=residuals1)
-    print("\nThe following is the result of the Augmented Dickey Fuller test")
-    if print_summary:
-        print(stat_test.summary())
-    if len(residuals1) > 500:
-        if abs(stat_test.tvalues['y-1']) > abs(adf_critical_values3[str(stat_value_ci)]):
-            print('通过平稳性检验!\nt_value={}, 临界值={}\n'.format(stat_test.tvalues['y-1'], adf_critical_values3[str(stat_value_ci)]))
-            # print("\nThe t-statistic value of the unit root coefficient is {} and the null hypothesis of a unit root is rejected. Hence, no unit root exists and residuals are stationary".format(stat_test.tvalues['y-1']))
-            #pass
-        else:
-            print('【FAIL】未通过平稳性检验!\nt_value={}, 临界值={}\n'.format(stat_test.tvalues['y-1'], adf_critical_values3[str(stat_value_ci)]))
-            # print("\nThe t-statistic value of the unit root coefficient is {} and the null hypothesis of a unit root is accepted. Hence, a unit root exists and residuals are not stationary and Error Correction Model is not checked for".format(stat_test.tvalues['y-1']))
-            return -1
-            
-    elif len(residuals1) > 250:
-        if abs(stat_test.tvalues['y-1']) > abs(adf_critical_values2[str(stat_value_ci)]):
-            print('通过平稳性检验!\nt_value={}, 临界值={}\n'.format(stat_test.tvalues['y-1'], adf_critical_values3[str(stat_value_ci)]))
-            # print("\nThe t-statistic value of the unit root coefficient is {} and the null hypothesis of a unit root is rejected. Hence, no unit root exists and residuals are stationary".format(stat_test.tvalues['y-1']))
-            #pass
-        else:
-            print('【FAIL】未通过平稳性检验!\nt_value={}, 临界值={}\n'.format(stat_test.tvalues['y-1'], adf_critical_values3[str(stat_value_ci)]))
-            # print("\nThe t-statistic value of the unit root coefficient is {} and the null hypothesis of a unit root is accepted. Hence, a unit root exists and residuals are not stationary and Error Correction Model is not checked for".format(stat_test.tvalues['y-1']))
-            #return -1
-        
-    elif len(residuals1) > 100:
-        if abs(stat_test.tvalues['y-1']) > abs(adf_critical_values1[str(stat_value_ci)]):
-            print('通过平稳性检验!\nt_value={}, 临界值={}\n'.format(stat_test.tvalues['y-1'], adf_critical_values3[str(stat_value_ci)]))
-            # print("\nThe t-statistic value of the unit root coefficient is {} and the null hypothesis of a unit root is rejected. Hence, no unit root exists and residuals are stationary".format(stat_test.tvalues['y-1']))
-            #pass
-        else:
-            print('【FAIL】未通过平稳性检验!\nt_value={}, 临界值={}\n'.format(stat_test.tvalues['y-1'], adf_critical_values3[str(stat_value_ci)]))
-            # print("\nThe t-statistic value of the unit root coefficient is {} and the null hypothesis of a unit root is accepted. Hence, a unit root exists and residuals are not stationary and Error Correction Model is not checked for".format(stat_test.tvalues['y-1']))  
-            return -1
-    
-    ## 无关的一提
-    ## 若通过平稳性检验，则说明x和y存在一个长期的均衡关系，但是短期内会出现非均衡状态，
-    ## 那么x和y必须进行动态修正和调整，使得非均衡状态尽量恢复到均衡状态。
-
-    # 显著性测试(ECM)
-    sig_1=test_significance(xdata,ydata,residuals1)
-    sig_2=test_significance(ydata,xdata,residuals2)
-        
-        
-    print("\nThe following is the regression result of the Error Correction model when {} is the independent and {} is the dependent variable".format(s1,s2))
-    if print_summary:
-        print(sig_1.summary())
-    
-    critical_value=abs(t.ppf(sig_value_ci+0.5*(1-sig_value_ci),len(residuals1)))
-    if abs(sig_1.tvalues['et-1']) > critical_value:
-        print('【1】通过显著性测试!\nt_value={}, 临界值={}\n'.format(sig_1.tvalues['et-1'], critical_value))
-        # print("\nThe t-statistic value of the lagged residual coefficient in the error correction model is {} against a critical value of {} and the null hypothesis of the coefficient not being significant is rejected. Hence, cointegration is significant".format(sig_1.tvalues['et-1'],critical_value))
-        
-    else:
-        print('【1】未通过显著性测试!\nt_value={}, 临界值={}\n'.format(sig_1.tvalues['et-1'], critical_value))
-        # print("\nThe t-statistic value of the lagged residual coefficient in the error correction model is {} against a critical value of {} and the null hypothesis of the coefficient not being significant is accepted. Hence, cointegration is not significant".format(sig_1.tvalues['et-1'],critical_value))
-        flag1+=1        
-       
-    print("\nThe following is the regression result of the Error Correction model when {} is the independent and {} is the dependent variable".format(s2,s1))
-    if print_summary:
-        print(sig_2.summary())
-    critical_value=abs(t.ppf(sig_value_ci+0.5*(1-sig_value_ci),len(residuals2)))
-    if abs(sig_2.tvalues['et-1']) > critical_value:
-        print('【2】通过显著性测试!\nt_value={}, 临界值={}\n'.format(sig_1.tvalues['et-1'], critical_value))
-        # print("\nThe t-statistic value of the lagged residual coefficient in the error correction model is {} against a critical value of {} and the null hypothesis of the coefficient not being significant is rejected. Hence, cointegration is significant".format(sig_2.tvalues['et-1'],critical_value))   
-    else:
-        print('【2】未通过显著性测试!\nt_value={}, 临界值={}\n'.format(sig_1.tvalues['et-1'], critical_value))
-        # print("\nThe t-statistic value of the lagged residual coefficient in the error correction model is {} against a critical value of {} and the null hypothesis of the coefficient not being significant is accepted. Hence, cointegration is not significant".format(sig_2.tvalues['et-1'],critical_value))
-        flag1+=1
-
-    if flag1 == 2:
-        print('【FAIL】二者都未通过显著性测试!')
-        return -2
-    
-    if abs(sig_1.tvalues['et-1']) < abs(sig_2.tvalues['et-1']):
-        print('\n对于这个协整问题，自变量x是{}，因变量y是{}'.format(s1,s2))
-        # print("\nFor the cointegration problem, the independent variable in regression between the asset classes is {} and the dependent variable is {}".format(s1,s2))
-        return 2
-    else:
-        print('\n对于这个协整问题，自变量x是{}，因变量y是{}'.format(s2,s1))
-        # print("\nFor the cointegration problem, the independent variable in regression between the asset classes is {} and the dependent variable is {}".format(s2,s1))
-        return 1
-
-def robustness(xdata,ydata,long_xdata,long_ydata,ci):
-    
-    # Finding Cointegration Weights of Short Period
-    coef,intercept,resid=regression(xdata,ydata)
-    # Finding Cointegration Weights of Long Period 
-    long_coef,long_intercept,long_resid=regression(long_xdata,long_ydata)
-    
-    # Testing the R-squared of the cointegration weight
-    ecm_object=test_significance(xdata,ydata,resid)
-    print("\nThe R2 score of the error correction model is {}. This means the lagged spread explains {}% of the total variance. ".format(ecm_object.rsquared,ecm_object.rsquared*100))
-
-    t_statistic,p_value=ttest_ind(resid,long_resid)
-    
-    if abs(t_statistic) < t.ppf(ci,len(xdata)):
-        print ("\nThe t-statistic is {} and the spread over 2 periods are similar according to t-statistic test".format(t_statistic))
-        print ("通过稳健性测试!")
-    else:
-        print ("\nThe t-statistic is {} and the spread over 2 periods are not similar according to t-statistic test".format(t_statistic))
-        print ("【FAIL】未通过稳健性测试! As co-integration is not significant, consider the use of Kalman Filters")
 
 def build_strategy(residuals,kalman=False,delta=1e-4,display=True):
     
@@ -291,7 +77,7 @@ def build_strategy(residuals,kalman=False,delta=1e-4,display=True):
             print ("The mean of reversion for this spread is {} \nSigma of reversion for this spread is {} \nThe speed of reversion, short term diffusion and half life of the OU process is {}, {} and {}".format(mean[0],diffusion_eq[0],speed_of_reversion[0],diffusion_ou[0],half_life[0]))
         else:
             
-            plt.figure(figsize=(24, 24))
+            plt.figure(figsize=(12, 12))
             iqr_mr=iqr(mean)*4
             iqr_sr=iqr(diffusion_eq)*4
             iqr_spr=iqr(speed_of_reversion)*4
@@ -518,7 +304,7 @@ def trade(data,spread,mean,diffusion_eq,weight,entry_point,slippage=0.05,rfr=0.0
                 returns[i]+=(rfr+1)**(float(1)/252)-1       
             
     if plot == True:
-        plt.figure(1, figsize=(24, 24))
+        plt.figure(1, figsize=(16, 12))
 
         s_iqr=0.75*iqr(spread)
         plt.ylim(min(spread)-s_iqr,max(spread)+s_iqr)
@@ -546,268 +332,11 @@ def trade(data,spread,mean,diffusion_eq,weight,entry_point,slippage=0.05,rfr=0.0
         plt.xlabel('Trading Sessions')
         plt.ylabel('Spread (Rupees)')
         plt.title("Simulation of trades on the spread")
-        plt.legend()
+        plt.legend(loc='best')
         
         plt.show()
 
     return buy,sell,status,portfolio_value,returns
-
-def optimization_plot(cum_rets,es,sharpe,risk,avg_duration,avg_profit,xdata,xlabel,opt_ind,opt_crit,opt_data):
-    plot_data=[avg_profit,cum_rets,sharpe,risk,es,avg_duration]
-    plot_labels=['Avg. Profit','Cumulative Return','Sharpe Ratio','Risk','Expected Shortfall','Average Duration']
-    if opt_crit not in plot_labels:
-        plot_labels.append(opt_crit)
-        plot_data.append(opt_data)
-    
-    plots=len(plot_data)
-    plt.figure(figsize=(42, 24))
-    for lab,i in zip(plot_labels,range(1,len(plot_labels)+1)):
-        plt.subplot(int('{}{}{}'.format(plots,1,i)))
-        plt.plot(xdata,plot_data[i-1])
-        plt.plot(xdata[opt_ind:opt_ind+1],plot_data[i-1][opt_ind:opt_ind+1],marker='o',label='Optimal Parameter')
-        #plt.xlabel(xlabel)
-        plt.ylabel(plot_labels[i-1])
-        plt.title('{} v/s {}'.format(plot_labels[i-1],xlabel))
-        plt.legend()
-    
-    plt.xlabel(xlabel)
-    plt.show()    
-
-def optimization_results(report,lower_bound, upper_bound,optimization_label,optimization_criteria,flag,display=False):
-    form=''
-    valid_trades=report[report['Total Trades'] > 0]
-    # Only optimising where valid trades are made
-    if valid_trades.shape[0] > 0:
-        if flag==0:
-            opt_ind=valid_trades[optimization_criteria].idxmin()
-            if opt_ind == len(report)-1:
-                if optimization_label == 'Residual Delta/Mean Reversion Delta':
-                    optimal_resid_delta=valid_trades[-1:]['Residual Delta'].values
-                    optimal_mr_delta=valid_trades[-1:]['Mean Reversion Delta'].values
-                else:
-                    optimal_parameter=valid_trades[-1:][optimization_label].values
-            else:
-                if optimization_label == 'Residual Delta/Mean Reversion Delta':
-                    optimal_resid_delta=valid_trades[opt_ind:opt_ind+1]['Residual Delta'].values
-                    optimal_mr_delta=valid_trades[opt_ind:opt_ind+1]['Mean Reversion Delta'].values
-                else:
-                    optimal_parameter=valid_trades[opt_ind:opt_ind+1][optimization_label].value
-            form='minimisation'
-        
-        else:
-            opt_ind=valid_trades[optimization_criteria].idxmax()
-            if opt_ind == len(report)-1:
-                if optimization_label == 'Residual Delta/Mean Reversion Delta':
-                    optimal_resid_delta=valid_trades[-1:]['Residual Delta'].values
-                    optimal_mr_delta=valid_trades[-1:]['Mean Reversion Delta'].values
-                else:
-                    optimal_parameter=valid_trades[-1:][optimization_label].values
-            else:
-                if optimization_label == 'Residual Delta/Mean Reversion Delta':
-                    optimal_resid_delta=valid_trades[opt_ind:opt_ind+1]['Residual Delta'].values
-                    optimal_mr_delta=valid_trades[opt_ind:opt_ind+1]['Mean Reversion Delta'].values
-                else:
-                    optimal_parameter=valid_trades[opt_ind:opt_ind+1][optimization_label].values
-            form='maximisation'
-                    
-        if display == True:
-            print ("The optimization report for {} is :".format(optimization_label))
-            print (report)
-            
-        if optimization_label == 'Residual Delta/Mean Reversion Delta':
-            print ("Optimal Residual Delta and Mean Reversion Delta of a trade for this pair with {} of {} is {} and {}".format(form,optimization_criteria,optimal_resid_delta,optimal_mr_delta))
-            df_rec=report['Residual Delta'].astype(str)+'/'+report['Mean Reversion Delta'].astype(str)
-            print ("\n The optimization plot for {} is: ".format(optimization_label))
-            df_rec=report['Residual Delta'].astype(str)+'/'+report['Mean Reversion Delta'].astype(str)
-            optimization_plot(report['Cumulative Return'],report['Expected Shortfall'],report['Sharpe Ratio'],report['Standard Deviation of Returns'],report['Average Trade Duration'],report['Average Profit'],df_rec,'Residual Delta/Mean Reversion Delta',opt_ind,optimization_criteria,report[optimization_criteria])
-            return optimal_resid_delta[0],optimal_mr_delta[0]
-    
-        else:
-            print ("Optimal {} for this spread with {} of {} is {}".format(optimization_label,form,optimization_criteria,optimal_parameter))
-            print ("\n The optimization plot for {} is: ".format(optimization_label))
-            optimization_plot(report['Cumulative Return'],report['Expected Shortfall'],report['Sharpe Ratio'],report['Standard Deviation of Returns'],report['Average Trade Duration'],report['Average Profit'],report[optimization_label],optimization_label,opt_ind,optimization_criteria,report[optimization_criteria])
-            return optimal_parameter[0]
-            
-    else:
-        print("No trades were made for any specifed value of {}. The return parameters are average of the minimal and maximal bounds".format(optimization_label))
-        if optimization_label == 'Residual Delta/Mean Reversion Delta':
-            optimal_resid_delta=[(upper_bound+lower_bound)*0.5]
-            optimal_mr_delta=[(upper_bound+lower_bound)*0.5]
-            return optimal_resid_delta[0],optimal_mr_delta[0]
-
-        else:       
-            optimal_parameter=[(upper_bound+lower_bound)*0.5]
-            return optimal_parameter[0]
-
-def optimize_parameter(lower_bound, upper_bound,optimization_label,optimization_criteria,flag,val,display=False,*trade_parameters):
-    data,spread,mean,entry_point,diffusion_eq,coint,slippage,rfr,max_trade_exit,stoploss,comm_short,comm_long,dates=trade_parameters
-    
-    # Generating set of probable parameter values
-    if optimization_label == 'Maximum Trade Duration':
-        probables=np.unique(np.linspace(lower_bound,upper_bound,val,dtype=int))
-
-    else:
-        probables=np.linspace(lower_bound,upper_bound,val)
-    
-    # Generating set of probable parameter values
-    form=''
-    report=pd.DataFrame()
-    weight=np.repeat(coint[0][1],len(mean))
-    data=data[-len(mean):]
-    for i in probables:
-            if optimization_label == 'Entry Bound':
-                buy,sell,status,portfolio_value,returns=trade(data,spread,mean,diffusion_eq,weight,i,slippage,rfr,max_trade_exit,stoploss,plot=False)
-            if optimization_label == 'Slippage':
-                buy,sell,status,portfolio_value,returns=trade(data,spread,mean,diffusion_eq,weight,entry_point,i,rfr,max_trade_exit,stoploss,plot=False)
-            if optimization_label == 'Maximum Trade Duration':
-                buy,sell,status,portfolio_value,returns=trade(data,spread,mean,diffusion_eq,weight,entry_point,slippage,rfr,i,stoploss,plot=False)
-            if optimization_label == 'Stoploss':
-                buy,sell,status,portfolio_value,returns=trade(data,spread,mean,diffusion_eq,weight,entry_point,slippage,rfr,max_trade_exit,i,plot=False)
-            
-            df_temp=trade_sheet(buy,sell,status,data,coint,comm_short,comm_long)
-            df,temp,tempu=backtest(df_temp,returns,dates,rfr,display=False)
-            df[optimization_label]=i
-            report=report.append(df,ignore_index=True)
-            
-    optimal_parameter=optimization_results(report,lower_bound, upper_bound,optimization_label,optimization_criteria,flag)
-    return optimal_parameter
-
-def optimize_residual_delta(lower_bound, upper_bound,optimization_criteria,flag,val,ou_flag,display=False,*trade_parameters):
-
-    ou_delta,data,entry_point,slippage,rfr,max_trade_exit,stoploss,commission_short,commission_long,dates=trade_parameters
-    # Generating set of probable parameter values
-    probables=np.geomspace(lower_bound,upper_bound,val)
-    report=pd.DataFrame()
-    
-    for i in probables:
-        #Simulate trading for the given parameter
-        a,b,spread=dynamic_regression(data['xdata'],data['ydata'],i)
-        if ou_flag == 1:
-            mean,diffeq=build_strategy(spread,True,ou_delta,display=False)
-        else:
-            mean,diffeq=build_strategy(spread,display=False)
-            
-        spread=spread[-len(mean):]
-        data=data[-len(mean):]
-        a=a[-len(mean):]
-        buy,sell,status,portfolio_value,returns=trade(data,spread,mean,diffeq,a,entry_point,slippage,rfr,max_trade_exit,stoploss,plot=False)
-        coint=np.vstack([np.ones(len(a)),a]).T
-        df_temp=trade_sheet(buy,sell,status,data,coint,commission_short,commission_long)
-        df,temp,tempu=backtest(df_temp,returns,dates,rfr,False)
-        df['Residual Delta']=i
-        report=report.append(df,ignore_index=True)
-    
-    # Finding the optimal parameter based on the given criteria
-    optimal_parameter=optimization_results(report,lower_bound, upper_bound,'Residual Delta',optimization_criteria,flag,display)
-    return optimal_parameter
-
-def optimize_mean_reversion_delta(lower_bound,upper_bound,optimization_criteria,flag,val,display=False,*trade_parameters):
-    weight,data,spread,entry_point,slippage,rfr,max_trade_exit,stoploss,commission_short,commission_long,dates=trade_parameters
-    
-    # Generating set of probable parameter values
-    probables=np.geomspace(lower_bound,upper_bound,val)
-    report=pd.DataFrame()
-
-    for i in probables:
-        
-        #Simulate trading for the given parameter
-        mean,diffeq=build_strategy(spread,True,i,display=False)
-        spread=spread[-len(mean):]
-        data=data[-len(mean):]
-        weight=weight[-len(mean):]
-        buy,sell,status,portfolio_value,returns=trade(data,spread,mean,diffeq,weight,0.4,slippage,rfr,max_trade_exit,stoploss,plot=False)
-        coint=np.vstack([np.ones(len(weight)),weight]).T
-        df_temp=trade_sheet(buy,sell,status,data,coint,commission_short,commission_long)
-        df,temp,tempu=backtest(df_temp,returns,dates,rfr,False)
-        df['Mean Reversion Delta']=i
-        report=report.append(df,ignore_index=True)
-    
-    optimal_parameter=optimization_results(report,lower_bound, upper_bound,'Mean Reversion Delta',optimization_criteria,flag,display)
-    return optimal_parameter
-
-def optimize_both_delta(lower_bound, upper_bound,optimization_criteria,flag,val,display=False,*trade_parameters):
-
-    data,entry_point,slippage,rfr,max_trade_exit,stoploss,commission_short,commission_long,dates=trade_parameters
-    # Generating set of probable parameter values
-    probables_resid=np.geomspace(lower_bound,upper_bound,val)
-    probables_ou=np.geomspace(lower_bound,upper_bound,val)
-    report=pd.DataFrame()
-    
-    for i in probables_resid:
-        for j in probables_ou:
-        #Simulate trading for the given parameter
-            a,b,spread=dynamic_regression(data['xdata'],data['ydata'],i)
-            mean,diffeq=build_strategy(spread,True,j,display=False)
-                    
-            spread=spread[-len(mean):]
-            data=data[-len(mean):]
-            a=a[-len(mean):]
-            buy,sell,status,portfolio_value,returns=trade(data,spread,mean,diffeq,a,entry_point,slippage,rfr,max_trade_exit,stoploss,plot=False)
-            coint=np.vstack([np.ones(len(a)),a]).T
-            df_temp=trade_sheet(buy,sell,status,data,coint,commission_short,commission_long)
-            df,temp,tempu=backtest(df_temp,returns,dates,rfr,False)
-            df['Residual Delta']=i
-            df['Mean Reversion Delta']=j
-            report=report.append(df,ignore_index=True)
-    
-        
-    optimal_resid_delta,optimal_mr_delta=optimization_results(report,lower_bound, upper_bound,'Residual Delta/Mean Reversion Delta',optimization_criteria,flag,display)
-    return optimal_resid_delta,optimal_mr_delta
-
-def optimize(data,spread,mean,diffusion_eq,entry_point,dates,coint,slippage,rfr,max_trade_exit,stoploss,commission_short=0,commission_long=0):
-    
-    params=(data,spread,mean,entry_point,diffusion_eq,coint,slippage,rfr,max_trade_exit,stoploss,commission_short,commission_long,dates)
-    for i in range(0,4):
-        inp=int(input("Enter optimisation parameter: Entry Point - 1, Slippage - 2, Max Duration - 3, Stoploss - 4, Exit - 5: "))
-        #inp=inp+1
-        if inp == 5:
-            break
-        
-        lower_bound=float(input("Lower Bound of the optimization criteria: "))
-        upper_bound=float(input("Upper Bound of the optimization criteria: "))
-        val=int(input("Number of interpolations for each parameter: "))
-        optimization_criteria=input("Optimization attribute: Total Trades, Complete Trades, Incomplete Trades, Profit Trades, Loss Trades, Total Profit, Average Trade Duration, Average Profit, Win Ratio, Average Profit on Profitable Trades, Standard Deviation of Returns, Value at Risk, Expected Shortfall, Sharpe Ratio, Sortino Ratio, Cumulative Return, Market Alpha, Market Beta, HML Beta, SMB Beta, WML Beta, Momentum Beta,Fama French Four Factor Alpha: ")
-        flag=int(input("Minimise-0, Maximise-1: "))
-        if inp == 1:
-            entry_point=optimize_parameter(lower_bound,upper_bound,'Entry Bound',optimization_criteria,flag,val,False,*params)
-
-        elif inp == 2:
-            slippage=optimize_parameter(lower_bound,upper_bound,'Slippage',optimization_criteria,flag,val,False,*params)
-            
-        elif inp == 3:
-            
-            max_trade_exit=optimize_parameter(lower_bound,upper_bound,'Maximum Trade Duration',optimization_criteria,flag,val,False,*params)
-        
-        elif inp == 4:
-            
-            stoploss=optimize_parameter(lower_bound,upper_bound,'Stoploss',optimization_criteria,flag,val,False,*params)
-
-
-    return entry_point,slippage,max_trade_exit,stoploss
-
-def optimize_delta(data,spread,entry_point,dates,weight,slippage,rfr,max_trade_exit,stoploss,commission_short,commission_long,flag1,ou_delta=0):
-    lower_bound=float(input("Lower Bound of the optimization criteria: "))
-    upper_bound=float(input("Upper Bound of the optimization criteria: "))
-    val=int(input("Number of interpolations for each parameter: "))
-    optimization_criteria=input("Optimization attribute: Total Trades, Complete Trades, Incomplete Trades, Profit Trades, Loss Trades, Total Profit, Average Trade Duration, Average Profit, Win Ratio, Average Profit on Profitable Trades, Standard Deviation of Returns, Value at Risk, Expected Shortfall, Sharpe Ratio, Sortino Ratio, Cumulative Return, Market Alpha, Market Beta, HML Beta, SMB Beta, WML Beta, Momentum Beta,Fama French Four Factor Alpha: ")
-    flag2=int(input("Minimise-0, Maximise-1: "))
-
-
-    if flag1 == 2 or flag1 == 4:
-        trade_parameters=(ou_delta,data,entry_point,slippage,rfr,max_trade_exit,stoploss,commission_short,commission_long,dates)
-        if flag1 == 4:
-            resid_delta=optimize_residual_delta(lower_bound,upper_bound,optimization_criteria,flag2,val,1,False,*trade_parameters)
-        else:
-            resid_delta=optimize_residual_delta(lower_bound,upper_bound,optimization_criteria,flag2,val,0,False,*trade_parameters)
-        return resid_delta
-        
-    if flag1 == 3:
-        trade_parameters=(weight,data,spread,entry_point,slippage,rfr,max_trade_exit,stoploss,commission_short,commission_long,dates)
-        return optimize_mean_reversion_delta(lower_bound,upper_bound,optimization_criteria,flag2,val,False,*trade_parameters)
-        
-    if flag1 == 5:
-        trade_parameters=(data,entry_point,slippage,rfr,max_trade_exit,stoploss,commission_short,commission_long,dates)
-        return optimize_both_delta(lower_bound,upper_bound,optimization_criteria,flag2,val,False,*trade_parameters)
 
 def commission(price_s1,price_s2,commission_short,commission_long):
     comm_s1=abs(price_s1*commission_long if price_s1 > 0 else price_s1*commission_short)
@@ -1126,14 +655,15 @@ def backtest(df,returns,dates,rfr,display=True,window=125):
 
         
     return strat_summary,te_summary,slb_summary
-    
+
+# start=train_start, end=train_end
 def trading_algorithm(
-        name1, name2,
-        start='2016/05/30', end='2017/05/30',
-        adf_ci=0.95, sig_test_ci=0.95,
-        robust_start='2014/05/30', robust_end='2016/05/30',
-        rob_ci=0.95,
-        if_train=True, if_set_trading_params=True
+    name1, name2,
+    start='2016-05-30', end='2017-05-30',
+    adf_ci=0.95, sig_test_ci=0.95,
+    robust_start='2014-05-30', robust_end='2016-05-30',
+    rob_ci=0.95,
+    if_train=True, if_set_trading_params=True
 ):
     print("\nTwo asset classes for cointegration: {}, {}\n".format(name1, name2))
 
@@ -1164,6 +694,10 @@ def trading_algorithm(
         s2=name2,
         print_summary=False
         )
+    if flag3 < 0:
+        return False
+
+    # 互换y,x
     if flag3 == 2:
         pairs_training.columns=['Date','xdata','ydata']
         pair.columns=['Date','xdata','ydata']
@@ -1202,7 +736,6 @@ def trading_algorithm(
                 # Enter Delta value for Kalman Filter for computing Cointegration Weight. Default is 0.0001
                 delta_r=float(0.0001)
                 coef_tr,intercept_tr,spread_tr=dynamic_regression(pairs_training['xdata'],pairs_training['ydata'],delta_r)
-                
             else:
                 coef_tr,intercept_tr,spread_tr=regression(pairs_training['xdata'],pairs_training['ydata'])
             
@@ -1442,9 +975,8 @@ def trading_algorithm(
     else:
         print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
         print ("\nNo pairs trading statistical arbitrage strategy exists for this pair. The program is terminated ")
-        
 
 
-
-
+if __name__ == '__main__':
+    pass
 
