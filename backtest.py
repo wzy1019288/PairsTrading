@@ -77,7 +77,7 @@ def build_strategy(residuals,kalman=False,delta=1e-4,display=True):
             print ("The mean of reversion for this spread is {} \nSigma of reversion for this spread is {} \nThe speed of reversion, short term diffusion and half life of the OU process is {}, {} and {}".format(mean[0],diffusion_eq[0],speed_of_reversion[0],diffusion_ou[0],half_life[0]))
         else:
             
-            plt.figure(figsize=(12, 12))
+            plt.figure(figsize=(12, 16))
             iqr_mr=iqr(mean)*4
             iqr_sr=iqr(diffusion_eq)*4
             iqr_spr=iqr(speed_of_reversion)*4
@@ -85,12 +85,13 @@ def build_strategy(residuals,kalman=False,delta=1e-4,display=True):
             lim=[iqr_mr,iqr_sr,iqr_spr,iqr_ds]
             xlabel='Trading Sessions'
             ylabel=['OU Mean','OU Diffusion','Rate of Revesion','Diffusion over short time']
-            title=['Mean of Reversion','Sigma of Revesion','Speed of Revesion','Diffusion over short timescale']
+            title=['Mean of Reversion','Sigma of Reversion','Speed of Reversion','Diffusion over short timescale']
             subplots=[411,412,413,414]
-            labels=['Mean of Reversion','Sigma of Revesion','Speed of Reversion','Diffusion over short timescale']
+            labels=['Mean of Reversion','Sigma of Reversion','Speed of Reversion','Diffusion over short timescale']
             plots=[mean,diffusion_eq,speed_of_reversion,diffusion_ou]
             
-            
+            plt.subplots_adjust(hspace=0.5)  # 调整子图间距
+
             for i in range(0,4):
                 plt.subplot(subplots[i])
                 plt.title(title[i])
@@ -112,7 +113,7 @@ def trade(data,spread,mean,diffusion_eq,weight,entry_point,slippage=0.05,rfr=0.0
     diff_spreadd=diff_spread.values
     
     top_trade_executing=0 #Corresponds to a trade entering from above the mean
-    bottom_trade_executing=0 #Corresponds to a trad entering from below the mean
+    bottom_trade_executing=0 #Corresponds to a trade entering from below the mean
     entry_price=0
     trade_executing=0
     
@@ -148,9 +149,10 @@ def trade(data,spread,mean,diffusion_eq,weight,entry_point,slippage=0.05,rfr=0.0
                 
             # Mean is the exit point for an executing trade 
             exit=mean[i]
-            top_entry= mean[i] + diffusion_eq[i]*entry_point
+            top_entry= mean[i] + diffusion_eq[i]*entry_point    # 拟合OU过程得到的diffusion
             bottom_entry= mean[i] - diffusion_eq[i]*entry_point
             
+            # Add slippage
             if flag1 != 1:
                     
                 if top_entry > 0:
@@ -193,6 +195,7 @@ def trade(data,spread,mean,diffusion_eq,weight,entry_point,slippage=0.05,rfr=0.0
                              trade_executing=1   
                     
                     else:
+                        # [(1-slippage)*top_entry, top_entry], 滑点范围带中开仓
                         if spread[i] <= entry and  spread[i] >= slipped_entry:
                             trade_executing=1
                             
@@ -311,7 +314,7 @@ def trade(data,spread,mean,diffusion_eq,weight,entry_point,slippage=0.05,rfr=0.0
         plt.plot(mean,label="Mean of Reversion",linestyle='--',linewidth=3)
         plt.plot(mean + diffusion_eq*entry_point,label="Entry Bounds",linestyle='--',linewidth=3)
         plt.plot(mean - diffusion_eq*entry_point,label="Entry Bounds",linestyle='--',linewidth=3)
-        plt.plot(spread,label="Reverting Spread",linewidth=5)
+        plt.plot(spread,label="Reverting Spread",linewidth=2)
         if flag1 != 1:
             plt.plot(slipped_entry_bottom,label='Slippage Range for Trade from below the mean',linestyle='--',linewidth=3)
             plt.plot(slipped_entry_top,label='Slippage Range for Trade from above the mean',linestyle='--',linewidth=3)
@@ -435,19 +438,19 @@ def backtest(df,returns,dates,rfr,display=True,window=125):
         
 
             #Finding Fama French 4 Factors
-            ff=pd.read_csv('FourFactors.csv',parse_dates=[0],usecols=['Date','HML %','SMB %','WML %','Rm-Rf %'])
-            ff.dropna(inplace=True)
-            ff_comb=dates_of_trading.merge(ff,on='Date')
-            ff=dates_of_trading.merge(ff,on='Date')
-            ff.set_index(ff['Date'],inplace=True)
-            ff.drop('Date',axis=1,inplace=True)
-            ff_comb.drop('Date',axis=1,inplace=True)
-            ff_comb=ff_comb/100
-            ff=ff/100  
-            beta_ff,alpha_ff,na=regression(ff_comb,df_returns['Rf_Returns'])
+            # ff=pd.read_csv('FourFactors.csv',parse_dates=[0],usecols=['Date','HML %','SMB %','WML %','Rm-Rf %'])
+            # ff.dropna(inplace=True)
+            # ff_comb=dates_of_trading.merge(ff,on='Date')
+            # ff=dates_of_trading.merge(ff,on='Date')
+            # ff.set_index(ff['Date'],inplace=True)
+            # ff.drop('Date',axis=1,inplace=True)
+            # ff_comb.drop('Date',axis=1,inplace=True)
+            # ff_comb=ff_comb/100
+            # ff=ff/100  
+            # beta_ff,alpha_ff,na=regression(ff_comb,df_returns['Rf_Returns'])
             
             # Finding market alpha and beta
-            beta_m,alpha_m,na=regression(ff_comb['Rm-Rf %'],df_returns['Rf_Returns'])
+            # beta_m,alpha_m,na=regression(ff_comb['Rm-Rf %'],df_returns['Rf_Returns'])
             
             total_trades=df.shape[0]
             complete_trades = df[df['Status']=='Completed'].shape[0]
@@ -480,8 +483,10 @@ def backtest(df,returns,dates,rfr,display=True,window=125):
                 strat_summary={'Total Trades':total_trades,'Complete Trades':complete_trades,'Incomplete Trades':incomplete_trades,
                    'Profit Trades':profit_trades,'Loss Trades':loss_trades,'Total Profit':total_profit,'Average Profit on Profitable Trades':average_profit_profittrades,'Average Trade Duration':average_duration,
                    'Average Profit':average_profit,'Win Ratio':float(profit_trades)/loss_trades,'Standard Deviation of Returns':risk,'Value at Risk':var, 'Expected Shortfall':es,'Sharpe Ratio':sharpe,
-                    'Sortino Ratio':sortino,'Cumulative Return':cumulative_annualised_return,'Market Alpha':alpha_m,'Market Beta':beta_m,
-                    'HML Beta':beta_ff[0], 'SMB Beta' :beta_ff[1], 'WML Beta':beta_ff[2], 'Momentum Beta':beta_ff[3],'Fama French Four Factor Alpha':alpha_ff}
+                    'Sortino Ratio':sortino,'Cumulative Return':cumulative_annualised_return,
+                    # 'Market Alpha':alpha_m,'Market Beta':beta_m,'HML Beta':beta_ff[0], 'SMB Beta' :beta_ff[1], 
+                    # 'WML Beta':beta_ff[2], 'Momentum Beta':beta_ff[3],'Fama French Four Factor Alpha':alpha_ff
+                    }
 
                 if display == True:
                     print ("\nSummary of all trades made:")
@@ -590,67 +595,67 @@ def backtest(df,returns,dates,rfr,display=True,window=125):
             plt.legend()
             plt.show()    
           
-            print ("\n The rolling Alpha, Beta factors on the market are: ")
-            rolling_beta=[]
-            rolling_alpha=[]
+            # print ("\n The rolling Alpha, Beta factors on the market are: ")
+            # rolling_beta=[]
+            # rolling_alpha=[]
             
-            for i in range(0,df_returns.shape[0]-window):
-                am,bm,na=regression(ff_comb[i:i+window]['Rm-Rf %'],df_returns[i:i+window]['Rf_Returns'])
-                rolling_beta.append(am)
-                rolling_alpha.append(bm)
+            # for i in range(0,df_returns.shape[0]-window):
+            #     am,bm,na=regression(ff_comb[i:i+window]['Rm-Rf %'],df_returns[i:i+window]['Rf_Returns'])
+            #     rolling_beta.append(am)
+            #     rolling_alpha.append(bm)
 
-            plt.figure(figsize=(24,10))
-            plt.subplot(121)
-            plt.plot(rolling_alpha,label='Rolling Alpha')
-            plt.xlabel('Trading Sessions')
-            plt.ylabel('Alpha')
-            plt.title('6M Rolling Market Alpha')
-            plt.legend()
-            plt.subplot(122)
-            plt.plot(rolling_beta,label='Rolling Beta')
-            plt.xlabel('Trading Sessions')
-            plt.ylabel('Beta')
-            plt.title('6M Rolling Market Beta')
-            plt.legend()
-            plt.show()
+            # plt.figure(figsize=(24,10))
+            # plt.subplot(121)
+            # plt.plot(rolling_alpha,label='Rolling Alpha')
+            # plt.xlabel('Trading Sessions')
+            # plt.ylabel('Alpha')
+            # plt.title('6M Rolling Market Alpha')
+            # plt.legend()
+            # plt.subplot(122)
+            # plt.plot(rolling_beta,label='Rolling Beta')
+            # plt.xlabel('Trading Sessions')
+            # plt.ylabel('Beta')
+            # plt.title('6M Rolling Market Beta')
+            # plt.legend()
+            # plt.show()
             
-            # Rolling Fama-French Factors      
-            rolling_alpha_ff=[]
-            rolling_beta_hml=[]
-            rolling_beta_smb=[]
-            rolling_beta_wml=[]
-            rolling_beta_mom=[]
+            # # Rolling Fama-French Factors      
+            # rolling_alpha_ff=[]
+            # rolling_beta_hml=[]
+            # rolling_beta_smb=[]
+            # rolling_beta_wml=[]
+            # rolling_beta_mom=[]
     
-            for i in range(0,df_returns.shape[0]-window):
-                a,b,resid1=regression(ff_comb[i:i+window],df_returns[i:i+window]['Rf_Returns'])
-                rolling_beta_hml.append(a[0])
-                rolling_beta_smb.append(a[1])
-                rolling_beta_wml.append(a[2])
-                rolling_beta_mom.append(a[3])
-                rolling_alpha_ff.append(b)
-            plt.figure(figsize=(24,10))
-            plt.subplot(121)
-            plt.plot(rolling_beta_hml,label='Rolling Beta HML')
-            plt.plot(rolling_beta_smb,label='Rolling Beta SMB')
-            plt.plot(rolling_beta_wml,label='Rolling Beta WML')
-            plt.plot(rolling_beta_mom,label='Rolling Beta MoM')
-            plt.xlabel('Trading Sessions')
-            plt.ylabel('Beta')
-            plt.title('6M Rolling Beta of the 4 Factor model')
-            plt.legend()
-            plt.subplot(122)
-            plt.plot(rolling_alpha_ff,label='Rolling Alpha')
-            plt.xlabel('Trading Sessions')
-            plt.ylabel('Alpha')
-            plt.title('6M Rolling Alpha from the 4 Factor model')
-            plt.legend()
-            plt.show()
+            # for i in range(0,df_returns.shape[0]-window):
+            #     a,b,resid1=regression(ff_comb[i:i+window],df_returns[i:i+window]['Rf_Returns'])
+            #     rolling_beta_hml.append(a[0])
+            #     rolling_beta_smb.append(a[1])
+            #     rolling_beta_wml.append(a[2])
+            #     rolling_beta_mom.append(a[3])
+            #     rolling_alpha_ff.append(b)
+            # plt.figure(figsize=(24,10))
+            # plt.subplot(121)
+            # plt.plot(rolling_beta_hml,label='Rolling Beta HML')
+            # plt.plot(rolling_beta_smb,label='Rolling Beta SMB')
+            # plt.plot(rolling_beta_wml,label='Rolling Beta WML')
+            # plt.plot(rolling_beta_mom,label='Rolling Beta MoM')
+            # plt.xlabel('Trading Sessions')
+            # plt.ylabel('Beta')
+            # plt.title('6M Rolling Beta of the 4 Factor model')
+            # plt.legend()
+            # plt.subplot(122)
+            # plt.plot(rolling_alpha_ff,label='Rolling Alpha')
+            # plt.xlabel('Trading Sessions')
+            # plt.ylabel('Alpha')
+            # plt.title('6M Rolling Alpha from the 4 Factor model')
+            # plt.legend()
+            # plt.show()
 
-            # Producing tear sheet from returns 
-            df_rets['Date']=pd.to_datetime(df_rets['Date'])
-            df_rets.set_index(df_rets['Date'],inplace=True)
+            # # Producing tear sheet from returns 
+            # df_rets['Date']=pd.to_datetime(df_rets['Date'])
+            # df_rets.set_index(df_rets['Date'],inplace=True)
      
-            pf.create_full_tear_sheet(df_rets['Returns'],benchmark_rets=ff['Rm-Rf %'],factor_returns=ff)
+            # pf.create_full_tear_sheet(df_rets['Returns'],benchmark_rets=ff['Rm-Rf %'],factor_returns=ff)
 
 
         
@@ -663,7 +668,8 @@ def trading_algorithm(
     adf_ci=0.95, sig_test_ci=0.95,
     robust_start='2014-05-30', robust_end='2016-05-30',
     rob_ci=0.95,
-    if_train=True, if_set_trading_params=True
+    if_train=True, if_set_trading_params=True,
+    if_backtest=True
 ):
     print("\nTwo asset classes for cointegration: {}, {}\n".format(name1, name2))
 
@@ -766,7 +772,11 @@ def trading_algorithm(
             if flag2 == 1:
                 # Enter Delta value for Kalman Filter for fitting to OU process. Default is 0.0001
                 delta_ou=float(0.0001)
-                mean_tr,diffeq_tr=build_strategy(spread_tr,True,delta_ou)
+                mean_tr,diffeq_tr=build_strategy(
+                    residuals=spread_tr,
+                    kalman=True,
+                    delta=delta_ou
+                    )
             else:
                 mean_tr,diffeq_tr=build_strategy(spread_tr)
             
@@ -799,16 +809,34 @@ def trading_algorithm(
                 max_trade_exit=int(45)
                 print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
                 print ("\n The trading strategy on the training period is \n")
-                #
-                buy_tr,sell_tr,status_tr,portfolio_value_tr,returns_tr=trade(pairs_tr,spread_tr,mean_tr,diffeq_tr,coef_tr,entry_point,slippage,rfr,max_trade_exit,stoploss)
-                trade_ticket_tr=trade_sheet(buy_tr,sell_tr,status_tr,pairs_tr,coint_tr,comm_short,comm_long)
+                # 
+                buy_tr,sell_tr,status_tr,portfolio_value_tr,returns_tr=trade(
+                                                                        data=pairs_tr,
+                                                                        spread=spread_tr,
+                                                                        mean=mean_tr,
+                                                                        diffusion_eq=diffeq_tr,
+                                                                        weight=coef_tr,
+                                                                        entry_point=entry_point,
+                                                                        slippage=slippage,
+                                                                        rfr=rfr,
+                                                                        max_trade_exit=max_trade_exit,
+                                                                        stoploss=stoploss
+                                                                        )
+                trade_ticket_tr=trade_sheet(
+                                    buy=buy_tr,
+                                    sell=sell_tr,
+                                    status=status_tr,
+                                    data=pairs_tr,
+                                    coint=coint_tr,
+                                    commission_short=comm_short,
+                                    commission_long=comm_long
+                                    )
                 print ("Details of Trades executed: ")
                 print (trade_ticket_tr)
 
                 print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
                 # Print backtesting analysis of trading on training data : Yes-1, No-0
-                if int(input("\nPrint backtesting analysis of trading on training data : Yes-1, No-0:")) ==1:
-                #if 1==1:
+                if if_backtest:
                     pairs_tr=pairs_tr[-len(returns_tr):]
                     backtest(
                         df=trade_ticket_tr,
