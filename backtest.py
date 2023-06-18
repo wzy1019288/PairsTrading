@@ -27,12 +27,357 @@ from stats_func import (
     cointegration_test,
     robustness
 )
-from optimize_func import (
-    optimize,
-    optimize_delta
-)
 
 
+###############################################################################################################################################
+## Optimize
+# -------------------------
+def optimization_plot(cum_rets,es,sharpe,risk,avg_duration,avg_profit,xdata,xlabel,opt_ind,opt_crit,opt_data):
+    plot_data=[avg_profit,cum_rets,sharpe,risk,es,avg_duration]
+    plot_labels=['Average Profit','Cumulative Return','Sharpe Ratio','Risk','Expected Shortfall','Average Duration']
+    if opt_crit not in plot_labels:
+        plot_labels.append(opt_crit)
+        plot_data.append(opt_data)
+    
+    plots=len(plot_data)
+    plt.figure(figsize=(21, 15))
+    for lab,i in zip(plot_labels,range(1,len(plot_labels)+1)):
+        plt.subplot(int('{}{}{}'.format(plots,1,i)))
+        plt.plot(xdata,plot_data[i-1])
+        plt.plot(xdata[opt_ind:opt_ind+1],plot_data[i-1][opt_ind:opt_ind+1],marker='o',label='Optimal Parameter')
+        if len(xdata) > 40:
+            plt.xticks([xdata[opt_ind:opt_ind+1].values[0]])
+        else:
+            plt.xlabel(xlabel)
+        plt.ylabel(plot_labels[i-1])
+        plt.title('{} v/s {}'.format(plot_labels[i-1],xlabel))
+        plt.legend()
+    
+    plt.show()
+
+def optimization_results(report,lower_bound, upper_bound,optimization_label,optimization_criteria,direction,display=False):
+    form=''
+    valid_trades=report[report['Total Trades'] > 0]
+    # Only optimising where valid trades are made
+    if valid_trades.shape[0] > 0:
+        if direction == 'min':
+            opt_ind=valid_trades[optimization_criteria].idxmin()
+            if opt_ind == len(report)-1:
+                if optimization_label == 'Residual Delta/Mean Reversion Delta':
+                    optimal_resid_delta=valid_trades[-1:]['Residual Delta'].values
+                    optimal_mr_delta=valid_trades[-1:]['Mean Reversion Delta'].values
+                else:
+                    optimal_parameter=valid_trades[-1:][optimization_label].values
+            else:
+                if optimization_label == 'Residual Delta/Mean Reversion Delta':
+                    optimal_resid_delta=valid_trades[opt_ind:opt_ind+1]['Residual Delta'].values
+                    optimal_mr_delta=valid_trades[opt_ind:opt_ind+1]['Mean Reversion Delta'].values
+                else:
+                    optimal_parameter=valid_trades[opt_ind:opt_ind+1][optimization_label].value
+            form='minimisation'
+        
+        elif direction == 'max':
+            opt_ind=valid_trades[optimization_criteria].idxmax()
+            if opt_ind == len(report)-1:
+                if optimization_label == 'Residual Delta/Mean Reversion Delta':
+                    optimal_resid_delta=valid_trades[-1:]['Residual Delta'].values
+                    optimal_mr_delta=valid_trades[-1:]['Mean Reversion Delta'].values
+                else:
+                    optimal_parameter=valid_trades[-1:][optimization_label].values
+            else:
+                if optimization_label == 'Residual Delta/Mean Reversion Delta':
+                    optimal_resid_delta=valid_trades[opt_ind:opt_ind+1]['Residual Delta'].values
+                    optimal_mr_delta=valid_trades[opt_ind:opt_ind+1]['Mean Reversion Delta'].values
+                else:
+                    optimal_parameter=valid_trades[opt_ind:opt_ind+1][optimization_label].values
+            form='maximisation'
+                    
+        if display == True:
+            print ("The optimization report for {} is :".format(optimization_label))
+            print (report)
+            
+        if optimization_label == 'Residual Delta/Mean Reversion Delta':
+            print ("Optimal Residual Delta and Mean Reversion Delta of a trade for this pair with {} of {} is {} and {}".format(form,optimization_criteria,optimal_resid_delta,optimal_mr_delta))
+            df_rec=report['Residual Delta'].astype(str)+'/'+report['Mean Reversion Delta'].astype(str)
+            print ("The optimization plot for {} is: \n ".format(optimization_label))
+            df_rec=report['Residual Delta'].astype(str)+'/'+report['Mean Reversion Delta'].astype(str)
+            optimization_plot(
+                cum_rets=report['Cumulative Return'],
+                es=report['Expected Shortfall'],
+                sharpe=report['Sharpe Ratio'],
+                risk=report['Standard Deviation of Returns'],
+                avg_duration=report['Average Trade Duration'],
+                avg_profit=report['Average Profit'],
+                xdata=df_rec,
+                xlabel=optimization_label,
+                opt_ind=opt_ind,
+                opt_crit=optimization_criteria,
+                opt_data=report[optimization_criteria]
+                )
+                # report['Cumulative Return'],report['Expected Shortfall'],report['Sharpe Ratio'],report['Standard Deviation of Returns'],report['Average Trade Duration'],report['Average Profit'],df_rec,'Residual Delta/Mean Reversion Delta',opt_ind,optimization_criteria,report[optimization_criteria])
+            return optimal_resid_delta[0],optimal_mr_delta[0]
+    
+        else:
+            print ("Optimal {} for this spread with {} of {} is {}".format(optimization_label,form,optimization_criteria,optimal_parameter))
+            print ("The optimization plot for {} is: \n ".format(optimization_label))
+            optimization_plot(
+                cum_rets=report['Cumulative Return'],
+                es=report['Expected Shortfall'],
+                sharpe=report['Sharpe Ratio'],
+                risk=report['Standard Deviation of Returns'],
+                avg_duration=report['Average Trade Duration'],
+                avg_profit=report['Average Profit'],
+                xdata=report[optimization_label],
+                xlabel=optimization_label,
+                opt_ind=opt_ind,
+                opt_crit=optimization_criteria,
+                opt_data=report[optimization_criteria]
+                )
+            return optimal_parameter[0]
+            
+    else:
+        print("No trades were made for any specifed value of {}. The return parameters are average of the minimal and maximal bounds".format(optimization_label))
+        if optimization_label == 'Residual Delta/Mean Reversion Delta':
+            optimal_resid_delta=[(upper_bound+lower_bound)*0.5]
+            optimal_mr_delta=[(upper_bound+lower_bound)*0.5]
+            return optimal_resid_delta[0],optimal_mr_delta[0]
+
+        else:       
+            optimal_parameter=[(upper_bound+lower_bound)*0.5]
+            return optimal_parameter[0]
+
+def optimize_parameter(lower_bound, upper_bound,optimization_label,optimization_criteria,direction,val,display=False,*trade_parameters):
+    data,spread,mean,entry_point,diffusion_eq,coint,slippage,rfr,max_trade_exit,stoploss,comm_short,comm_long,dates=trade_parameters
+    
+    # Generating set of probable parameter values
+    if optimization_label == 'Maximum Trade Duration':
+        probables=np.unique(np.linspace(lower_bound,upper_bound,val,dtype=int))
+
+    else:
+        probables=np.linspace(lower_bound,upper_bound,val)
+    
+    # Generating set of probable parameter values
+    form=''
+    report=pd.DataFrame()
+    weight=np.repeat(coint[0][1],len(mean))
+    data=data[-len(mean):]
+    for i in probables:
+            if optimization_label == 'Entry Bound':
+                buy,sell,status,portfolio_value,returns=trade(data,spread,mean,diffusion_eq,weight,i,slippage,rfr,max_trade_exit,stoploss,plot=False)
+            if optimization_label == 'Slippage':
+                buy,sell,status,portfolio_value,returns=trade(data,spread,mean,diffusion_eq,weight,entry_point,i,rfr,max_trade_exit,stoploss,plot=False)
+            if optimization_label == 'Maximum Trade Duration':
+                buy,sell,status,portfolio_value,returns=trade(data,spread,mean,diffusion_eq,weight,entry_point,slippage,rfr,i,stoploss,plot=False)
+            if optimization_label == 'Stoploss':
+                buy,sell,status,portfolio_value,returns=trade(data,spread,mean,diffusion_eq,weight,entry_point,slippage,rfr,max_trade_exit,i,plot=False)
+            
+            df_temp=trade_sheet(buy,sell,status,data,coint,comm_short,comm_long)
+            df,temp,tempu=backtest(df_temp,returns,dates,rfr,display=False)
+            df[optimization_label]=i
+            report=report.append(df,ignore_index=True)
+            
+    optimal_parameter=optimization_results(report,lower_bound, upper_bound,optimization_label,optimization_criteria,direction)
+    return optimal_parameter
+
+def optimize_residual_delta(lower_bound, upper_bound,optimization_criteria,direction,val,ou_flag,display=False,*trade_parameters):
+    '''优化计算residual时的KalmanFilter的参数delta_resid'''
+
+    ou_delta,data,entry_point,slippage,rfr,max_trade_exit,stoploss,commission_short,commission_long,dates=trade_parameters
+    # Generating set of probable parameter values
+    probables=np.geomspace(lower_bound,upper_bound,val)
+    report=pd.DataFrame()
+    
+    for i in probables:
+        #Simulate trading for the given parameter
+        try:
+            a,b,spread=dynamic_regression(data['xdata'],data['ydata'],i)
+            if ou_flag == 1:
+                mean,diffeq=build_strategy(spread,True,ou_delta,display=False)
+            else:
+                mean,diffeq=build_strategy(spread,display=False)
+        except:
+            continue
+            
+        spread=spread[-len(mean):]
+        data=data[-len(mean):]
+        a=a[-len(mean):]
+        buy,sell,status,portfolio_value,returns=trade(data,spread,mean,diffeq,a,entry_point,slippage,rfr,max_trade_exit,stoploss,plot=False)
+        coint=np.vstack([np.ones(len(a)),a]).T
+        df_temp=trade_sheet(buy,sell,status,data,coint,commission_short,commission_long)
+        df,temp,tempu=backtest(df_temp,returns,dates,rfr,False)
+        df['Residual Delta']=i
+        report=report.append(df,ignore_index=True)
+    
+    # Finding the optimal parameter based on the given criteria
+    optimal_parameter=optimization_results(report,lower_bound, upper_bound,'Residual Delta',optimization_criteria,direction,display)
+    return optimal_parameter
+
+def optimize_mean_reversion_delta(lower_bound,upper_bound,optimization_criteria,direction,val,display=False,*trade_parameters):
+    '''优化拟合OU过程时的KalmanFilter的参数delta_ou'''
+    weight,data,spread,entry_point,slippage,rfr,max_trade_exit,stoploss,commission_short,commission_long,dates=trade_parameters
+    
+    # Generating set of probable parameter values
+    probables=np.geomspace(lower_bound,upper_bound,val)
+    report=pd.DataFrame()
+
+    for i in probables:
+        
+        #Simulate trading for the given parameter
+        try:
+            mean,diffeq=build_strategy(spread,True,i,display=False)
+        except:
+            continue
+        spread=spread[-len(mean):]
+        data=data[-len(mean):]
+        weight=weight[-len(mean):]
+        buy,sell,status,portfolio_value,returns=trade(data,spread,mean,diffeq,weight,0.4,slippage,rfr,max_trade_exit,stoploss,plot=False)
+        coint=np.vstack([np.ones(len(weight)),weight]).T
+        df_temp=trade_sheet(buy,sell,status,data,coint,commission_short,commission_long)
+        df,temp,tempu=backtest(df_temp,returns,dates,rfr,False)
+        df['Mean Reversion Delta']=i
+        report=report.append(df,ignore_index=True)
+    
+    optimal_parameter=optimization_results(report,lower_bound, upper_bound,'Mean Reversion Delta',optimization_criteria,direction,display)
+    return optimal_parameter
+
+def optimize_both_delta(lower_bound, upper_bound,optimization_criteria,direction,val,display=False,*trade_parameters):
+
+    data,entry_point,slippage,rfr,max_trade_exit,stoploss,commission_short,commission_long,dates=trade_parameters
+    # Generating set of probable parameter values
+    probables_resid=np.geomspace(lower_bound,upper_bound,val)
+    probables_ou=np.geomspace(lower_bound,upper_bound,val)
+    report=pd.DataFrame()
+    
+    for i in probables_resid:
+        for j in probables_ou:
+        #Simulate trading for the given parameter
+            try:
+                a,b,spread=dynamic_regression(data['xdata'],data['ydata'],i)
+                mean,diffeq=build_strategy(spread,True,j,display=False)
+            except:
+                continue
+                    
+            spread=spread[-len(mean):]
+            data=data[-len(mean):]
+            a=a[-len(mean):]
+            buy,sell,status,portfolio_value,returns=trade(data,spread,mean,diffeq,a,entry_point,slippage,rfr,max_trade_exit,stoploss,plot=False)
+            coint=np.vstack([np.ones(len(a)),a]).T
+            df_temp=trade_sheet(buy,sell,status,data,coint,commission_short,commission_long)
+            df,temp,tempu=backtest(df_temp,returns,dates,rfr,False)
+            df['Residual Delta']=i
+            df['Mean Reversion Delta']=j
+            report=report.append(df,ignore_index=True)
+    
+    # optimization_label = 'Residual Delta/Mean Reversion Delta'
+    optimal_resid_delta,optimal_mr_delta=optimization_results(report,lower_bound,upper_bound,'Residual Delta/Mean Reversion Delta',optimization_criteria,direction,display)
+    return optimal_resid_delta,optimal_mr_delta
+
+def optimize(data,spread,mean,diffusion_eq,entry_point,dates,coint,slippage,rfr,max_trade_exit,stoploss,commission_short=0,commission_long=0, 
+             optimize_params={
+                 'entry_point':     {'lower_bound': 0.5,  'upper_bound': 1.5,  'val': 20, 'optimization_criteria': 'Total Profit', 'direction': 'max', 'if_opt': True},
+                 'slippage':        {'lower_bound': 0.05, 'upper_bound': 0.3,  'val': 20, 'optimization_criteria': 'Total Profit', 'direction': 'max', 'if_opt': True},
+                 'max_trade_exit':  {'lower_bound': 20,   'upper_bound': 50,   'val': 30, 'optimization_criteria': 'Total Profit', 'direction': 'max', 'if_opt': True},
+                 'stoploss':        {'lower_bound': 0.15, 'upper_bound': 0.45, 'val': 20, 'optimization_criteria': 'Total Profit', 'direction': 'max', 'if_opt': True},
+             }):
+    
+    params=(data,spread,mean,entry_point,diffusion_eq,coint,slippage,rfr,max_trade_exit,stoploss,commission_short,commission_long,dates)
+    for p, settings in optimize_params.items():
+
+        if not settings['if_opt']:
+            continue
+
+        lower_bound = settings['lower_bound']
+        upper_bound = settings['upper_bound']
+        val = settings['val']
+        optimization_criteria = settings['optimization_criteria']
+        direction = settings['direction']
+        
+        if p == 'entry_point':
+            entry_point=optimize_parameter(lower_bound,upper_bound,'Entry Bound',optimization_criteria,direction,val,False,*params)
+
+        elif p == 'slippage':
+            slippage=optimize_parameter(lower_bound,upper_bound,'Slippage',optimization_criteria,direction,val,False,*params)
+            
+        elif p == 'max_trade_exit':
+            max_trade_exit=optimize_parameter(lower_bound,upper_bound,'Maximum Trade Duration',optimization_criteria,direction,val,False,*params)
+        
+        elif p == 'stoploss':
+            stoploss=optimize_parameter(lower_bound,upper_bound,'Stoploss',optimization_criteria,direction,val,False,*params)
+
+
+    return entry_point,slippage,max_trade_exit,stoploss
+
+def optimize_delta(data,spread,entry_point,dates,weight,slippage,rfr,max_trade_exit,stoploss,commission_short,commission_long,optimize_flag,ou_delta=0, 
+                   optimize_params={'lower_bound': 1e-10, 'upper_bound': 1, 'val': 100, 'optimization_criteria': 'Total Profit', 'direction': 'max'}):
+    '''
+
+    优化delta_resid or/and 优化delta_ou
+    ---
+
+    - optimize_flag
+    
+    {'res': 'opt', 'ou': 'opt'} 优化delta_resid，优化delta_ou
+
+    {'res': 'opt', 'ou': 'use'} 优化delta_resid，仅代入原delta_ou计算，不优化delta_ou
+
+    {'res': 'opt', 'ou': None}  优化delta_resid，不存在delta_ou
+
+    {'res': None, 'ou': 'opt'}  优化delta_ou
+
+    - optimize_params
+
+    lower_bound: Lower Bound of the optimization criteria
+
+    upper_bound: Upper Bound of the optimization criteria
+
+    val: Number of interpolations for each parameter
+
+    optimization_criteria: Optimization attribute: Total Trades, Complete Trades, Incomplete Trades, Profit Trades, Loss Trades, Total Profit, Average Trade Duration, 
+        Average Profit, Win Ratio, Average Profit on Profitable Trades, Standard Deviation of Returns, Value at Risk, Expected Shortfall, Sharpe Ratio, 
+        Sortino Ratio, Cumulative Return, Market Alpha, Market Beta, HML Beta, SMB Beta, WML Beta, Momentum Beta,Fama French Four Factor Alpha
+
+    direction: Optimization direction ( 'max' or 'min' )
+    '''
+
+    # Lower Bound of the optimization criteria
+    lower_bound=float(optimize_params['lower_bound'])
+    # Upper Bound of the optimization criteria
+    upper_bound=float(optimize_params['upper_bound'])
+    # Number of interpolations for each parameter
+    val=int(optimize_params['val'])
+    # Optimization attribute: Total Trades, Complete Trades, Incomplete Trades, Profit Trades, Loss Trades, Total Profit, Average Trade Duration, 
+    # Average Profit, Win Ratio, Average Profit on Profitable Trades, Standard Deviation of Returns, Value at Risk, Expected Shortfall, Sharpe Ratio, 
+    # Sortino Ratio, Cumulative Return, Market Alpha, Market Beta, HML Beta, SMB Beta, WML Beta, Momentum Beta,Fama French Four Factor Alpha
+    optimization_criteria=optimize_params['optimization_criteria']
+    direction=optimize_params['direction']
+
+    # 优化delta_resid，不优化delta_ou
+    if optimize_flag == {'res': 'opt', 'ou': 'use'} or optimize_flag == {'res': 'opt', 'ou': None}:
+        trade_parameters=(ou_delta,data,entry_point,slippage,rfr,max_trade_exit,stoploss,commission_short,commission_long,dates)
+        
+        # 代入原delta_ou
+        if optimize_flag == {'res': 'opt', 'ou': 'use'}:
+            resid_delta=optimize_residual_delta(lower_bound,upper_bound,optimization_criteria,direction,val,1,False,*trade_parameters)
+        elif optimize_flag == {'res': 'opt', 'ou': None}:
+            resid_delta=optimize_residual_delta(lower_bound,upper_bound,optimization_criteria,direction,val,0,False,*trade_parameters)
+        return resid_delta
+    
+    # 优化delta_ou，不优化delta_resid
+    if optimize_flag == {'res': None, 'ou': 'opt'}:
+        trade_parameters=(weight,data,spread,entry_point,slippage,rfr,max_trade_exit,stoploss,commission_short,commission_long,dates)
+        return optimize_mean_reversion_delta(lower_bound,upper_bound,optimization_criteria,direction,val,False,*trade_parameters)
+    
+    # 同时优化delta_resid，优化delta_ou
+    if optimize_flag == {'res': 'opt', 'ou': 'opt'}:
+        trade_parameters=(data,entry_point,slippage,rfr,max_trade_exit,stoploss,commission_short,commission_long,dates)
+        return optimize_both_delta(lower_bound,upper_bound,optimization_criteria,direction,val,False,*trade_parameters)
+###############################################################################################################################################
+
+
+
+###############################################################################################################################################
+## Backtest
+# -------------------------
 def build_strategy(residuals,kalman=False,delta=1e-4,display=True):
     
     # Defining the dataset to be fit to the analytical OU process equation
@@ -482,7 +827,7 @@ def backtest(df,returns,dates,rfr,display=True,window=125):
             if total_trades >0:
                 strat_summary={'Total Trades':total_trades,'Complete Trades':complete_trades,'Incomplete Trades':incomplete_trades,
                    'Profit Trades':profit_trades,'Loss Trades':loss_trades,'Total Profit':total_profit,'Average Profit on Profitable Trades':average_profit_profittrades,'Average Trade Duration':average_duration,
-                   'Average Profit':average_profit,'Win Ratio':float(profit_trades)/loss_trades,'Standard Deviation of Returns':risk,'Value at Risk':var, 'Expected Shortfall':es,'Sharpe Ratio':sharpe,
+                   'Average Profit':average_profit,'Win Ratio':float(profit_trades)/loss_trades if loss_trades!=0 else 1.,'Standard Deviation of Returns':risk,'Value at Risk':var, 'Expected Shortfall':es,'Sharpe Ratio':sharpe,
                     'Sortino Ratio':sortino,'Cumulative Return':cumulative_annualised_return,
                     # 'Market Alpha':alpha_m,'Market Beta':beta_m,'HML Beta':beta_ff[0], 'SMB Beta' :beta_ff[1], 
                     # 'WML Beta':beta_ff[2], 'Momentum Beta':beta_ff[3],'Fama French Four Factor Alpha':alpha_ff
@@ -515,6 +860,8 @@ def backtest(df,returns,dates,rfr,display=True,window=125):
         
     
         #Time Elapsed Trades
+
+    #Exceeded Maximum Duration Trades
     try: 
         te=df[df['Status']== "Maximum Time Elapsed"]
         te_trades=te.shape[0]
@@ -651,26 +998,76 @@ def backtest(df,returns,dates,rfr,display=True,window=125):
             # plt.legend()
             # plt.show()
 
-            # # Producing tear sheet from returns 
-            # df_rets['Date']=pd.to_datetime(df_rets['Date'])
-            # df_rets.set_index(df_rets['Date'],inplace=True)
+            # Producing tear sheet from returns 
+            df_rets['Date']=pd.to_datetime(df_rets['Date'])
+            df_rets.set_index(df_rets['Date'],inplace=True)
      
             # pf.create_full_tear_sheet(df_rets['Returns'],benchmark_rets=ff['Rm-Rf %'],factor_returns=ff)
+            pf.create_full_tear_sheet(df_rets['Returns'])
 
 
         
     return strat_summary,te_summary,slb_summary
+###############################################################################################################################################
+
 
 # start=train_start, end=train_end
 def trading_algorithm(
     name1, name2,
-    start='2016-05-30', end='2017-05-30',
+    
+    train_start='2016-05-30', train_end='2017-05-30',
     adf_ci=0.95, sig_test_ci=0.95,
+    
     robust_start='2014-05-30', robust_end='2016-05-30',
     rob_ci=0.95,
-    if_train=True, if_set_trading_params=True,
-    if_backtest=True
+
+    test_start='2017-05-30', test_end='2018-05-30',
+    
+    if_use_kmf_when_cal_res=True, if_use_kmf_when_cal_OU=True,
+    
+    if_train=True, 
+    init_params = {
+        # Number of standard deviations from the mean at which trade should be initiated
+        'entry_point': 0.7,     
+        # The permissible slippage observed on residual spread: [Enter -999 for no slippage consideration]
+        'slippage': 0.1,
+        # The permissible stoploss observed on residual spread: [Enter -999 for no stoploss consideration]
+        'stoploss': 0.3,
+        # The commission on executing a short trade: [Enter 0 for no commission consideration]
+        'comm_short': 0.0002,
+        # The commission on executing a long trade: [Enter 0 for no commission consideration]
+        'comm_long': 0.0002,
+        # Risk free rate
+        'rfr': 0.0685,
+        # Maximum number of days a trade can last post the trade initiation: [Enter -999 for no maximum trade duration consideration]
+        'max_trade_exit': 45
+    }, 
+    if_backtest=True, 
+
+    if_optimize=False, 
+    optimize_params={
+        'delta_resid':     {'lower_bound': 1e-10,  'upper_bound': 1e-1,  'val': 100, 'optimization_criteria': 'Total Profit', 'direction': 'max', 'if_opt': True},
+        'delta_ou':        {'lower_bound': 1e-10,  'upper_bound': 1e-1,  'val': 100, 'optimization_criteria': 'Total Profit', 'direction': 'max', 'if_opt': True},  # 同时优化两个delta时，仅根据delta_resid的范围优化，delta_ou的参数无效
+        'entry_point':     {'lower_bound': 0.5,    'upper_bound': 1.5,   'val': 20,  'optimization_criteria': 'Total Profit', 'direction': 'max', 'if_opt': True},
+        'slippage':        {'lower_bound': 0.05,   'upper_bound': 0.3,   'val': 20,  'optimization_criteria': 'Total Profit', 'direction': 'max', 'if_opt': True},
+        'max_trade_exit':  {'lower_bound': 20,     'upper_bound': 50,    'val': 30,  'optimization_criteria': 'Total Profit', 'direction': 'max', 'if_opt': True},
+        'stoploss':        {'lower_bound': 0.15,   'upper_bound': 0.45,  'val': 20,  'optimization_criteria': 'Total Profit', 'direction': 'max', 'if_opt': True},
+    },
+
+    if_test=True, if_test_use_opt_params=True
+
 ):
+    '''
+    
+    - if_use_kmf_when_cal_res
+    
+    Whether use Kalman Filters or Linear Regression when calculating residuals
+    
+    - if_use_kmf_when_cal_OU
+
+    Whether use Kalman Filters or Linear Regression when calculating Ornstein Uhlenbeck parameters
+
+    '''
     print("\nTwo asset classes for cointegration: {}, {}\n".format(name1, name2))
 
     asset1=pd.read_csv('data/{}.csv'.format(name1),usecols=['Date','Adj Close'],parse_dates=[0])
@@ -679,11 +1076,11 @@ def trading_algorithm(
     pair.columns=['Date','ydata','xdata']
     pair.dropna(inplace=True)
 
-    print('\nDate to run cointegration test from {} to {}\n'.format(start, end))
-    start=pd.to_datetime(start)
-    end=pd.to_datetime(end)
-    pairs_training=pair[pair['Date'] > start]
-    pairs_training=pairs_training[pairs_training['Date'] < end]
+    print('\nDate to run cointegration test from {} to {}\n'.format(train_start, train_end))
+    train_start=pd.to_datetime(train_start)
+    train_end=pd.to_datetime(train_end)
+    pairs_training=pair[pair['Date'] > train_start]
+    pairs_training=pairs_training[pairs_training['Date'] < train_end]
 
     print('\n The confidence interval for the ADF test: {}\n'.format(adf_ci))
     print('\n The confidence interval for the cointegration significance test: {}\n'.format(sig_test_ci))
@@ -691,27 +1088,27 @@ def trading_algorithm(
     sig_test_ci=float(sig_test_ci)
     
     # 协整性测试
-    flag3=cointegration_test(
-        xdata=pairs_training['xdata'],
-        ydata=pairs_training['ydata'],
-        stat_value_ci=adf_ci,
-        sig_value_ci=sig_test_ci,
-        s1=name1,
-        s2=name2,
-        print_summary=False
-        )
-    if flag3 < 0:
+    FLAG_COINT = cointegration_test(
+                    xdata=pairs_training['xdata'],
+                    ydata=pairs_training['ydata'],
+                    stat_value_ci=adf_ci,
+                    sig_value_ci=sig_test_ci,
+                    s1=name1,
+                    s2=name2,
+                    print_summary=False
+                    )
+    if FLAG_COINT < 0:
         return False
 
     # 互换y,x
-    if flag3 == 2:
+    if FLAG_COINT == 2:
         pairs_training.columns=['Date','xdata','ydata']
         pair.columns=['Date','xdata','ydata']
         temp=name1
         name1=name2
         name2=temp
 
-    if  flag3==1 or flag3==2: 
+    if  FLAG_COINT==1 or FLAG_COINT==2: 
 
         # 协整的稳健性测试
         print ("\nA larger date range to asses the robustness of the cointegration from {} to {}\n".format(robust_start, robust_end))
@@ -733,27 +1130,19 @@ def trading_algorithm(
         print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
         # Continue with strategy fitting on training data
         if if_train:
-            # Calculate residuals using Kalman Filters-1 or Linear Regression-0
-            flag1=int(0)
-            # Calculate Ornstein Uhlenbeck parameters using Kalman Filters-1 or Linear Regression-0
-            flag2=int(0)
             
-            if flag1 == 1:
-                # Enter Delta value for Kalman Filter for computing Cointegration Weight. Default is 0.0001
-                delta_r=float(0.0001)
+            # Calculate residuals using Kalman Filters-1 or Linear Regression-0
+            if if_use_kmf_when_cal_res:
+                delta_r=init_params['delta_resid']
                 coef_tr,intercept_tr,spread_tr=dynamic_regression(pairs_training['xdata'],pairs_training['ydata'],delta_r)
             else:
                 coef_tr,intercept_tr,spread_tr=regression(pairs_training['xdata'],pairs_training['ydata'])
             
             print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
             print("\nThe cointegration weights and the intercept for the trading strategy are as follows: \n")
-            if flag1 == 0:
+            if if_use_kmf_when_cal_res:
                 print ("{}:{}".format(name1,1))
-                print ("{}:{}".format(name2,coef_tr))
-                print ("Intercept: {}".format(intercept_tr))
-            else:
-                print ("{}:{}".format(name1,1))
-                plt.figure(figsize=(24,10))
+                plt.figure(figsize=(16,7))
                 plt.subplot(121)
                 plt.plot(coef_tr,label='Cointegration Weight {}'.format(name2))
                 plt.title('Estimate of Cointegration Weight of {}'.format(name2))
@@ -767,11 +1156,15 @@ def trading_algorithm(
                 plt.xlabel('Trading Sessions')
                 plt.legend()
                 plt.show()
+            else:
+                print ("{}:{}".format(name1,1))
+                print ("{}:{}".format(name2,coef_tr))
+                print ("Intercept: {}".format(intercept_tr))
                 
             print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
-            if flag2 == 1:
-                # Enter Delta value for Kalman Filter for fitting to OU process. Default is 0.0001
-                delta_ou=float(0.0001)
+            # Calculate Ornstein Uhlenbeck parameters using Kalman Filters-1 or Linear Regression-0
+            if if_use_kmf_when_cal_OU:
+                delta_ou=init_params['delta_ou']
                 mean_tr,diffeq_tr=build_strategy(
                     residuals=spread_tr,
                     kalman=True,
@@ -780,7 +1173,7 @@ def trading_algorithm(
             else:
                 mean_tr,diffeq_tr=build_strategy(spread_tr)
             
-            if flag1 == 1:
+            if if_use_kmf_when_cal_res:
                 coef_tr=coef_tr[-len(mean_tr):]
             else:
                 coef_tr=np.repeat(coef_tr,len(mean_tr))
@@ -788,121 +1181,121 @@ def trading_algorithm(
             spread_tr=spread_tr[-len(mean_tr):]
             pairs_tr=pairs_training[-len(mean_tr):]
             coint_tr=np.vstack([np.ones(len(coef_tr)),coef_tr]).T
-            
-            print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
-            # Simulate trading on training data using the fitted parameters: Yes-1, No-0
-            if if_set_trading_params:
-                print ("Enter the Following trading parameters:")
-                # Number of standard deviations from the mean at which trade should be initiated
-                entry_point=float(0.7)
-                # The permissible slippage observed on residual spread: [Enter -999 for no slippage consideration]
-                slippage=float(0.1)
-                # The permissible stoploss observed on residual spread: [Enter -999 for no stoploss consideration]
-                stoploss=float(0.3)
-                # The commission on executing a short trade: [Enter 0 for no commission consideration]
-                comm_short=float(0.0002)
-                # The commission on executing a long trade: [Enter 0 for no commission consideration]
-                comm_long=float(0.0002)
-                # Risk free rate
-                rfr=float(0.0685)
-                # Maximum number of days a trade can last post the trade initiation: [Enter -999 for no maximum trade duration consideration]
-                max_trade_exit=int(45)
-                print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
-                print ("\n The trading strategy on the training period is \n")
-                # 
-                buy_tr,sell_tr,status_tr,portfolio_value_tr,returns_tr=trade(
-                                                                        data=pairs_tr,
-                                                                        spread=spread_tr,
-                                                                        mean=mean_tr,
-                                                                        diffusion_eq=diffeq_tr,
-                                                                        weight=coef_tr,
-                                                                        entry_point=entry_point,
-                                                                        slippage=slippage,
-                                                                        rfr=rfr,
-                                                                        max_trade_exit=max_trade_exit,
-                                                                        stoploss=stoploss
-                                                                        )
-                trade_ticket_tr=trade_sheet(
-                                    buy=buy_tr,
-                                    sell=sell_tr,
-                                    status=status_tr,
-                                    data=pairs_tr,
-                                    coint=coint_tr,
-                                    commission_short=comm_short,
-                                    commission_long=comm_long
-                                    )
-                print ("Details of Trades executed: ")
-                print (trade_ticket_tr)
 
-                print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
-                # Print backtesting analysis of trading on training data : Yes-1, No-0
-                if if_backtest:
-                    pairs_tr=pairs_tr[-len(returns_tr):]
-                    backtest(
-                        df=trade_ticket_tr,
-                        returns=returns_tr,
-                        dates=pairs_tr['Date'],
-                        rfr=rfr)
-                    
-                print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
-                if input("\nCompute Optimized parameters for the training spread: Yes-1, No-0: ") == 1:  
-                                        
-                    if flag1 == 1 and flag2 ==1: 
-                        if int(input("\nOptimise over delta parameter in the transition covariance matrix in Kalman Filter for both computing cointegration weight and fitting to OU process: Yes-1, No-0: ")) == 1:
-                            opt_delta_resid,opt_delta_mr=optimize_delta(pairs_training,spread_tr,entry_point,pairs_tr['Date'],coef_tr,slippage,rfr,max_trade_exit,stoploss,comm_short,comm_long,5)
-                            coef_tr,intercept_tr,spread_tr=dynamic_regression(pairs_training['xdata'],pairs_training['ydata'],opt_delta_resid) 
-                            mean_tr,diffeq_tr=build_strategy(spread_tr,True,opt_delta_mr,False)
-                            coef_tr=coef_tr[-len(mean_tr):]
-                            spread_tr=spread_tr[-len(mean_tr):]
-                            intercept_tr=intercept_tr[-len(mean_tr):]
-                        else:
-                            opt_delta_resid,opt_delta_mr=delta_r,delta_ou
-                                  
-                    elif flag1 == 1:
-                        if int(input("\nOptimise over delta parameter in the transition covariance matrix in Kalman Filter for computing cointegration weight: Yes-1, No-0: ")) == 1:
-                            if flag2 == 1:
-                                opt_delta_resid=optimize_delta(pairs_training,spread_tr,entry_point,pairs_tr['Date'],coef_tr,slippage,rfr,max_trade_exit,stoploss,comm_short,comm_long,4,delta_ou)
-                                coef_tr,intercept_tr,spread_tr=dynamic_regression(pairs_training['xdata'],pairs_training['ydata'],opt_delta_resid)
-                                mean_tr,diffeq_tr=build_strategy(spread_tr,True,delta_ou,False)
+            print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
+            print ("\n The trading strategy on the training period is \n")
+            entry_point=init_params['entry_point']
+            slippage=init_params['slippage']
+            stoploss=init_params['stoploss']
+            comm_short=init_params['comm_short']
+            comm_long=init_params['comm_long']
+            rfr=init_params['rfr']
+            max_trade_exit=init_params['max_trade_exit']
+            buy_tr,sell_tr,status_tr,portfolio_value_tr,returns_tr=trade(
+                                                                    data=pairs_tr,
+                                                                    spread=spread_tr,
+                                                                    mean=mean_tr,
+                                                                    diffusion_eq=diffeq_tr,
+                                                                    weight=coef_tr,
+                                                                    entry_point=entry_point,
+                                                                    slippage=slippage,
+                                                                    rfr=rfr,
+                                                                    max_trade_exit=max_trade_exit,
+                                                                    stoploss=stoploss
+                                                                    )
+            trade_ticket_tr=trade_sheet(
+                                buy=buy_tr,
+                                sell=sell_tr,
+                                status=status_tr,
+                                data=pairs_tr,
+                                coint=coint_tr,
+                                commission_short=comm_short,
+                                commission_long=comm_long
+                                )
+            print ("Details of Trades executed: ")
+            print (trade_ticket_tr)
+
+            print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
+            # Print backtesting analysis of trading on training data : Yes-1, No-0
+            if if_backtest:
+                pairs_tr=pairs_tr[-len(returns_tr):]
+                backtest(
+                    df=trade_ticket_tr,
+                    returns=returns_tr,
+                    dates=pairs_tr['Date'],
+                    rfr=rfr)
+                
+            print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
+            # Compute Optimized parameters for the training spread: Yes-1, No-0
+            if if_optimize:  
+                                    
+                if if_use_kmf_when_cal_res and if_use_kmf_when_cal_OU: 
+                    # Optimise over delta parameter in the transition covariance matrix in Kalman Filter for both computing cointegration weight and fitting to OU process: Yes-1, No-0
+                    if optimize_params['delta_resid']['if_opt'] and optimize_params['delta_ou']['if_opt']:
+                        opt_delta_resid,opt_delta_mr=optimize_delta(
+                                                        data=pairs_training,
+                                                        spread=spread_tr,
+                                                        entry_point=entry_point,
+                                                        dates=pairs_tr['Date'],
+                                                        weight=coef_tr,
+                                                        slippage=slippage,
+                                                        rfr=rfr,
+                                                        max_trade_exit=max_trade_exit,
+                                                        stoploss=stoploss,
+                                                        commission_short=comm_short,
+                                                        commission_long=comm_long,
+                                                        optimize_flag={'res': 'opt', 'ou': 'opt'},
+                                                        optimize_params=optimize_params['delta_resid']
+                                                        )
+                        coef_tr,intercept_tr,spread_tr=dynamic_regression(pairs_training['xdata'],pairs_training['ydata'],opt_delta_resid) 
+                        mean_tr,diffeq_tr=build_strategy(spread_tr,True,opt_delta_mr,False)
+                        coef_tr=coef_tr[-len(mean_tr):]
+                        spread_tr=spread_tr[-len(mean_tr):]
+                        intercept_tr=intercept_tr[-len(mean_tr):]
+                    else:
+                        opt_delta_resid,opt_delta_mr=delta_r,delta_ou
                                 
-                            else:
-                                opt_delta_resid=optimize_delta(pairs_training,spread_tr,entry_point,pairs_tr['Date'],coef_tr,slippage,rfr,max_trade_exit,stoploss,comm_short,comm_long,2)
-                                coef_tr,intercept_tr,spread_tr=dynamic_regression(pairs_training['xdata'],pairs_training['ydata'],opt_delta_resid)
-                                mean_tr,diffeq_tr=build_strategy(spread_tr,display=False)
-                                
-                            spread_tr=spread_tr[-len(mean_tr):]
-                            coef_tr=coef_tr[-len(mean_tr):]
-                            intercept_tr=intercept_tr[-len(mean_tr):]
+                elif if_use_kmf_when_cal_res:
+                    if optimize_params['delta_resid']['if_opt']:
+                        if if_use_kmf_when_cal_OU:
+                            opt_delta_resid=optimize_delta(pairs_training,spread_tr,entry_point,pairs_tr['Date'],coef_tr,slippage,rfr,max_trade_exit,stoploss,comm_short,comm_long,{'res': 'opt', 'ou': 'use'},delta_ou,optimize_params['delta_resid'])
+                            coef_tr,intercept_tr,spread_tr=dynamic_regression(pairs_training['xdata'],pairs_training['ydata'],opt_delta_resid)
+                            mean_tr,diffeq_tr=build_strategy(spread_tr,True,delta_ou,False)
+                            
                         else:
-                            opt_delta_resid=delta_r
-                        
-                        
-                    elif flag2 == 1:
-                        if int(input("\nOptimise over delta parameter in the transition covariance matrix in Kalman Filter for fitting to OU process: Yes-1, No-0: ")) == 1:
-                        #if 1==1:    
-                            opt_delta_mr=optimize_delta(pairs_training,spread_tr,entry_point,pairs_tr['Date'],coef_tr,slippage,rfr,max_trade_exit,stoploss,comm_short,comm_long,3)
-                            mean_tr,diffeq_tr=build_strategy(spread_tr,True,opt_delta_mr,False)
-                        else:
-                            opt_delta_mr=delta_ou
+                            opt_delta_resid=optimize_delta(pairs_training,spread_tr,entry_point,pairs_tr['Date'],coef_tr,slippage,rfr,max_trade_exit,stoploss,comm_short,comm_long,{'res': 'opt', 'ou': None},optimize_params=optimize_params['delta_resid'])
+                            coef_tr,intercept_tr,spread_tr=dynamic_regression(pairs_training['xdata'],pairs_training['ydata'],opt_delta_resid)
+                            mean_tr,diffeq_tr=build_strategy(spread_tr,display=False)
+                            
                         spread_tr=spread_tr[-len(mean_tr):]
                         coef_tr=coef_tr[-len(mean_tr):]
-                            
-                    
-                    if int(input("\nOptimise over Entry Bound, Slippage, Maximum trade duration, Stoploss: Yes-1, No-0: ")) == 1:
-                    #if 1==1:
-                        opt_entry_point,opt_slippage,opt_max_trade_exit,opt_stoploss=optimize(pairs_tr,spread_tr,mean_tr,diffeq_tr,entry_point,pairs_tr['Date'],coint_tr,slippage,rfr,max_trade_exit,stoploss,comm_short,comm_long)
-                        
+                        intercept_tr=intercept_tr[-len(mean_tr):]
                     else:
-                        opt_entry_point,opt_slippage,opt_max_trade_exit,opt_stoploss=entry_point,slippage,max_trade_exit,stoploss
+                        opt_delta_resid=delta_r
+
+                    
+                elif if_use_kmf_when_cal_OU:
+                    if optimize_params['delta_ou']['if_opt']:
+                        opt_delta_mr=optimize_delta(pairs_training,spread_tr,entry_point,pairs_tr['Date'],coef_tr,slippage,rfr,max_trade_exit,stoploss,comm_short,comm_long,{'res': None, 'ou': 'opt'},optimize_params=optimize_params['delta_ou'])
+                        mean_tr,diffeq_tr=build_strategy(spread_tr,True,opt_delta_mr,False)
+                    else:
+                        opt_delta_mr=delta_ou
+                    spread_tr=spread_tr[-len(mean_tr):]
+                    coef_tr=coef_tr[-len(mean_tr):]
+                        
+                # Optimise over Entry Bound, Slippage, Maximum trade duration, Stoploss: Yes-1, No-0
+                optimize_trading_params = {k:v for k,v in optimize_params.items() if k not in {'delta_resid','delta_ou'}}
+                if True in [i['if_opt'] for i in optimize_trading_params.values()]:
+                    opt_entry_point,opt_slippage,opt_max_trade_exit,opt_stoploss=optimize(pairs_tr,spread_tr,mean_tr,diffeq_tr,entry_point,pairs_tr['Date'],coint_tr,slippage,rfr,max_trade_exit,stoploss,comm_short,comm_long,optimize_params=optimize_trading_params)
+                else:
+                    opt_entry_point,opt_slippage,opt_max_trade_exit,opt_stoploss=entry_point,slippage,max_trade_exit,stoploss
 
 
             print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
-            
-            if int(input("\nPerform Testing: Yes-1, No-0: ")) ==1:
-                start=pd.to_datetime(input('Start Date: '))
-                end=pd.to_datetime(input('End Date: '))
-                pairs_testing=pair[pair['Date'] > start]
-                pairs_testing=pairs_testing[pairs_testing['Date'] < end]
+            # Perform Testing: Yes-1, No-0
+            if if_test:
+                pairs_testing=pair[pair['Date'] > test_start]
+                pairs_testing=pairs_testing[pairs_testing['Date'] < test_end]
                 pairs_te=pairs_testing
         
                 ''' When Kalman Filters are used using live trading, the cointegration weights are rebalanced
@@ -910,15 +1303,10 @@ def trading_algorithm(
                 then shift it one day forward, so that for the current trading session, the cointegrating
                 weights are computed from the entire data before the trading sesion. '''
                 
-                flag4=int(input('Use optimized parameters-1, Use training parameters-2, Enter new trading parameters-3: '))
-                if flag4 !=2 and flag4 != 3:
-                    flag4=1
                     
-                if flag1 == 1:
-                    if flag4 == 1:
+                if if_use_kmf_when_cal_res:
+                    if if_test_use_opt_params:
                         delta_r=opt_delta_resid
-                    if flag4 ==3:
-                        delta_r=float(input("Delta value for Kalman Filter for computing Cointegration Weight. Default is 0.0001: "))
                     
                     coef_te,intercept_te,spread_te=dynamic_regression(pairs_testing['xdata'],pairs_testing['ydata'],delta_r)                
                     coef_te=coef_te[:-1]
@@ -926,7 +1314,7 @@ def trading_algorithm(
                     pairs_te=pairs_te[1:]
                     spread_te=pairs_te['ydata']-coef_te*pairs_te['xdata']-intercept_te
                     spread_te=spread_te.values
-                    plt.figure(figsize=(24,10))
+                    plt.figure(figsize=(16,7))
                     plt.subplot(121)
                     plt.plot(coef_tr,label='Cointegration Weight {}'.format(name2))
                     plt.title('Estimate of Cointegration Weight of {}'.format(name2))
@@ -940,7 +1328,6 @@ def trading_algorithm(
                     plt.xlabel('Trading Sessions')
                     plt.legend()
                     plt.show()
-
                     
                 else:
                     coef_te=coef_tr[0]
@@ -949,18 +1336,16 @@ def trading_algorithm(
                     spread_te=spread_te.values
                 
 
-                if flag2 == 1:
-                    if flag4 == 1:
+                if if_use_kmf_when_cal_OU:
+                    if if_test_use_opt_params:
                         delta_ou=opt_delta_mr
-                    if flag4 ==3:
-                        delta_ou=float(input("Delta value for Kalman Filter for fitting to OU process. Default is 0.0001: "))
                     mean_te,diffeq_te=build_strategy(spread_te,True,delta_ou,True)
 
                 else:
                     mean_te=np.repeat(mean_tr[0],pairs_te.shape[0])
                     diffeq_te=np.repeat(diffeq_tr[0],pairs_te.shape[0])                
         
-                if flag1 == 1:
+                if if_use_kmf_when_cal_res:
                     coef_te=coef_te[-len(mean_te):]
                 else:
                     coef_te=np.repeat(coef_te,len(mean_te))
@@ -970,18 +1355,12 @@ def trading_algorithm(
                 pairs_te=pairs_te[-len(mean_te):]
                 coint_te=np.vstack([np.ones(len(coef_te)),coef_te]).T
     
-                if flag4 == 1:
+                if if_test_use_opt_params:
                     entry_point=opt_entry_point
                     slippage=opt_slippage
                     max_trade_exit=opt_max_trade_exit
                     stoploss=opt_stoploss
-                        
-                if flag4 == 3:
-                    print ("\nEnter the Following trading parameters: ")
-                    entry_point=float(input("Number of standard deviations from the mean at which trade should be initiated: "))
-                    slippage=float(input("The permissible slippage observed on residual spread: "))
-                    max_trade_exit=int(input("Maximum number of days a trade can last post the trade initiation: "))
-                    stoploss=float(input("The permissible stoploss observed on the residual spread: "))
+
                 print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
                 print ("\n The trading strategy on the testing period is \n")
                 
@@ -992,7 +1371,12 @@ def trading_algorithm(
                 print (trade_ticket_te)
                 print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
                 print ("\n\nAnalysis of performance of trading on testing data: ")                     
-                backtest(trade_ticket_te,returns_te,pairs_te['Date'],rfr)
+                backtest(
+                    df=trade_ticket_te,
+                    returns=returns_te,
+                    dates=pairs_te['Date'],
+                    rfr=rfr
+                    )
                 
             else:
                 print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")

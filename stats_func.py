@@ -55,7 +55,10 @@ def dynamic_regression(xdata,ydata,delta=1e-4):
                   observation_covariance=1.0,
                   transition_covariance=trans_cov)
 
+    # try:
     state_means, state_covs = kf.filter(ydata)
+    # except Exception as e:
+        # assert False, f'{ydata}\n{e}'
 
     slope=state_means[:,0]
     intercept=state_means[:,1]
@@ -128,6 +131,7 @@ def cointegration_test(xdata,ydata,stat_value_ci,sig_value_ci,s1,s2,print_summar
     Return
     - -1 : 未通过平稳性检验
     - -2 : 未通过显著性测试
+    - >0 : 全部通过
     '''
     
     adf_critical_values1={'0.99':-3.46, '0.95':-2.88,'0.9':-2.57}
