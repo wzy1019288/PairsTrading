@@ -62,35 +62,17 @@ def optimization_results(report,lower_bound, upper_bound,optimization_label,opti
     if valid_trades.shape[0] > 0:
         if direction == 'min':
             opt_ind=valid_trades[optimization_criteria].idxmin()
-            if opt_ind == len(report)-1:
-                if optimization_label == 'Residual Delta/Mean Reversion Delta':
-                    optimal_resid_delta=valid_trades[-1:]['Residual Delta'].values
-                    optimal_mr_delta=valid_trades[-1:]['Mean Reversion Delta'].values
-                else:
-                    optimal_parameter=valid_trades[-1:][optimization_label].values
-            else:
-                if optimization_label == 'Residual Delta/Mean Reversion Delta':
-                    optimal_resid_delta=valid_trades[opt_ind:opt_ind+1]['Residual Delta'].values
-                    optimal_mr_delta=valid_trades[opt_ind:opt_ind+1]['Mean Reversion Delta'].values
-                else:
-                    optimal_parameter=valid_trades[opt_ind:opt_ind+1][optimization_label].value
             form='minimisation'
         
         elif direction == 'max':
             opt_ind=valid_trades[optimization_criteria].idxmax()
-            if opt_ind == len(report)-1:
-                if optimization_label == 'Residual Delta/Mean Reversion Delta':
-                    optimal_resid_delta=valid_trades[-1:]['Residual Delta'].values
-                    optimal_mr_delta=valid_trades[-1:]['Mean Reversion Delta'].values
-                else:
-                    optimal_parameter=valid_trades[-1:][optimization_label].values
-            else:
-                if optimization_label == 'Residual Delta/Mean Reversion Delta':
-                    optimal_resid_delta=valid_trades[opt_ind:opt_ind+1]['Residual Delta'].values
-                    optimal_mr_delta=valid_trades[opt_ind:opt_ind+1]['Mean Reversion Delta'].values
-                else:
-                    optimal_parameter=valid_trades[opt_ind:opt_ind+1][optimization_label].values
             form='maximisation'
+        
+        if optimization_label == 'Residual Delta/Mean Reversion Delta':
+            optimal_resid_delta=valid_trades.loc[opt_ind]['Residual Delta']
+            optimal_mr_delta=valid_trades.loc[opt_ind]['Mean Reversion Delta']
+        else:
+            optimal_parameter=valid_trades.loc[opt_ind][optimization_label]
                     
         if display == True:
             print ("The optimization report for {} is :".format(optimization_label))
@@ -115,7 +97,13 @@ def optimization_results(report,lower_bound, upper_bound,optimization_label,opti
                 opt_data=report[optimization_criteria]
                 )
                 # report['Cumulative Return'],report['Expected Shortfall'],report['Sharpe Ratio'],report['Standard Deviation of Returns'],report['Average Trade Duration'],report['Average Profit'],df_rec,'Residual Delta/Mean Reversion Delta',opt_ind,optimization_criteria,report[optimization_criteria])
-            return optimal_resid_delta[0],optimal_mr_delta[0]
+            
+            # print(report)
+            # print(valid_trades)
+            # print(opt_ind)
+
+            # return optimal_resid_delta[0],optimal_mr_delta[0]
+            return optimal_resid_delta,optimal_mr_delta
     
         else:
             print ("Optimal {} for this spread with {} of {} is {}".format(optimization_label,form,optimization_criteria,optimal_parameter))
@@ -133,7 +121,8 @@ def optimization_results(report,lower_bound, upper_bound,optimization_label,opti
                 opt_crit=optimization_criteria,
                 opt_data=report[optimization_criteria]
                 )
-            return optimal_parameter[0]
+            # return optimal_parameter[0]
+            return optimal_parameter
             
     else:
         print("No trades were made for any specifed value of {}. The return parameters are average of the minimal and maximal bounds".format(optimization_label))
@@ -450,12 +439,11 @@ def build_strategy(residuals,kalman=False,delta=1e-4,display=True):
     return mean,diffusion_eq 
 
 def trade(data,spread,mean,diffusion_eq,weight,entry_point,slippage=0.05,rfr=0.02,max_trade_exit=np.float('Inf'),stoploss=0.5,plot=True):
-    #,diff_spread
     # Initialising trading Flags 
     ydata=data['ydata'].values
     xdata=data['xdata'].values
-    diff_spread=data['ydata']-weight*data['xdata']
-    diff_spreadd=diff_spread.values
+    # spread=(data['ydata']-weight*data['xdata']).values
+    # diff_spreadd=diff_spread.values
     
     top_trade_executing=0 #Corresponds to a trade entering from above the mean
     bottom_trade_executing=0 #Corresponds to a trade entering from below the mean
@@ -502,13 +490,11 @@ def trade(data,spread,mean,diffusion_eq,weight,entry_point,slippage=0.05,rfr=0.0
                     
                 if top_entry > 0:
                     slipped_entry_top[i]=float(1-slippage)*top_entry
-
                 else:
                     slipped_entry_top[i]=float(1+slippage)*(top_entry)
                 
                 if bottom_entry < 0:
                     slipped_entry_bottom[i]=float(1-slippage)*bottom_entry
-
                 else:
                     slipped_entry_bottom[i]=float(1+slippage)*bottom_entry
                 
@@ -538,7 +524,6 @@ def trade(data,spread,mean,diffusion_eq,weight,entry_point,slippage=0.05,rfr=0.0
                     if flag1 == 1:
                         if spread[i]==entry or (i!=0 and spread[i-1]>entry and spread[i]<entry):
                              trade_executing=1   
-                    
                     else:
                         # [(1-slippage)*top_entry, top_entry], 滑点范围带中开仓
                         if spread[i] <= entry and  spread[i] >= slipped_entry:
@@ -641,7 +626,7 @@ def trade(data,spread,mean,diffusion_eq,weight,entry_point,slippage=0.05,rfr=0.0
             ''' Based on the trading activity in the current and previous sesison the portfolio 
             value is computed and the returns are calculated'''
             
-            if i!=0 and portfolio_value[i-1] != 0 and i-1 not in sell:
+            if i!=0 and portfolio_value[i-1] != rfr and i-1 not in sell:
                 returns[i]=(portfolio_value[i]-portfolio_value[i-1])/(portfolio_value[i-1])
             
             
@@ -650,7 +635,11 @@ def trade(data,spread,mean,diffusion_eq,weight,entry_point,slippage=0.05,rfr=0.0
             
             if returns[i] == 0:
                 returns[i]+=(rfr+1)**(float(1)/252)-1       
-            
+    
+    # plot_returns(returns)
+    # pd.DataFrame(portfolio_value).plot()
+    # plt.show()
+
     if plot == True:
         plt.figure(1, figsize=(16, 12))
 
@@ -764,7 +753,7 @@ def trade_sheet(buy,sell,status,data,coint,commission_short=0,commission_long=0)
         
     return df
 
-def backtest(df,returns,dates,rfr,display=True,window=125):
+def backtest(df,returns,dates,rfr,display=True,window=10):
     
     #Trade Statistics
     flag=0
@@ -919,7 +908,7 @@ def backtest(df,returns,dates,rfr,display=True,window=125):
             plt.subplot(132)
             plt.boxplot(df['Net Profit'])
             plt.xlabel('Profit')
-            plt.ylabel('Profit in $''s')
+            plt.ylabel('Profit in $')
             plt.title('Profit of all trades')
     
             plt.subplot(133)
@@ -999,15 +988,21 @@ def backtest(df,returns,dates,rfr,display=True,window=125):
             # plt.show()
 
             # Producing tear sheet from returns 
-            df_rets['Date']=pd.to_datetime(df_rets['Date'])
-            df_rets.set_index(df_rets['Date'],inplace=True)
+            # df_rets['Date']=pd.to_datetime(df_rets['Date'])
+            # df_rets.set_index(df_rets['Date'],inplace=True)
      
             # pf.create_full_tear_sheet(df_rets['Returns'],benchmark_rets=ff['Rm-Rf %'],factor_returns=ff)
-            pf.create_full_tear_sheet(df_rets['Returns'])
+            # pf.create_full_tear_sheet(df_rets['Returns'])
 
 
         
     return strat_summary,te_summary,slb_summary
+
+def plot_returns(returns_tr):
+    (pd.Series(returns_tr)+1).cumprod().plot()
+    plt.xlabel('Time')
+    plt.ylabel('Returns')
+    plt.show()
 ###############################################################################################################################################
 
 
@@ -1023,9 +1018,8 @@ def trading_algorithm(
 
     test_start='2017-05-30', test_end='2018-05-30',
     
-    if_use_kmf_when_cal_res=True, if_use_kmf_when_cal_OU=True,
-    
     if_train=True, 
+    if_use_kmf_when_cal_res=True, if_use_kmf_when_cal_OU=True,
     init_params = {
         # Number of standard deviations from the mean at which trade should be initiated
         'entry_point': 0.7,     
@@ -1082,6 +1076,12 @@ def trading_algorithm(
     pairs_training=pair[pair['Date'] > train_start]
     pairs_training=pairs_training[pairs_training['Date'] < train_end]
 
+    # pairs_training[['ydata','xdata']].plot()
+    # plt.legend([name1, name2])
+    # plt.ylabel('Price')
+    # plt.xlabel('Time')
+    # plt.show()
+
     print('\n The confidence interval for the ADF test: {}\n'.format(adf_ci))
     print('\n The confidence interval for the cointegration significance test: {}\n'.format(sig_test_ci))
     adf_ci=float(adf_ci)
@@ -1119,7 +1119,7 @@ def trading_algorithm(
         rob_ci=float(rob_ci)
         robust_set=pair[pair['Date'] > date1]
         robust_set=robust_set[robust_set['Date'] < date2]
-        robustness(
+        r2 = robustness(
             xdata=pairs_training['xdata'],
             ydata=pairs_training['ydata'],
             long_xdata=robust_set['xdata'],
@@ -1203,6 +1203,7 @@ def trading_algorithm(
                                                                     max_trade_exit=max_trade_exit,
                                                                     stoploss=stoploss
                                                                     )
+            plot_returns(returns_tr)
             trade_ticket_tr=trade_sheet(
                                 buy=buy_tr,
                                 sell=sell_tr,
@@ -1366,6 +1367,7 @@ def trading_algorithm(
                 
                 
                 buy_te,sell_te,status_te,portfolio_value_te,returns_te=trade(pairs_te,spread_te,mean_te,diffeq_te,coef_te,entry_point,slippage,rfr,max_trade_exit,stoploss)
+                plot_returns(returns_te)
                 trade_ticket_te=trade_sheet(buy_te,sell_te,status_te,pairs_te,coint_te,comm_short,comm_long)
                 print ("\nDetails of Trades executed: ")
                 print (trade_ticket_te)
@@ -1384,6 +1386,7 @@ def trading_algorithm(
         else:
             print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
             print ("\nNo simulation of trading on training or testing analysis performed. The program is terminated")
+            return r2
     else:
         print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
         print ("\nNo pairs trading statistical arbitrage strategy exists for this pair. The program is terminated ")

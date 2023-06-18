@@ -55,10 +55,7 @@ def dynamic_regression(xdata,ydata,delta=1e-4):
                   observation_covariance=1.0,
                   transition_covariance=trans_cov)
 
-    # try:
     state_means, state_covs = kf.filter(ydata)
-    # except Exception as e:
-        # assert False, f'{ydata}\n{e}'
 
     slope=state_means[:,0]
     intercept=state_means[:,1]
@@ -143,6 +140,12 @@ def cointegration_test(xdata,ydata,stat_value_ci,sig_value_ci,s1,s2,print_summar
     coef2,intercept2,residuals2=regression(ydata,xdata)
     flag=0 
     flag1=0
+
+    # plt.plot(residuals1)
+    # plt.ylabel('Price')
+    # plt.xlabel('Time')
+    # plt.legend(['residual'])
+    # plt.show()
     
     # 平稳性检验(ADF): 对残差进行自回归，检验残差是否平稳 （残差是否存在单位根）
     stat_test=test_stationarity(residuals=residuals1)
@@ -184,8 +187,8 @@ def cointegration_test(xdata,ydata,stat_value_ci,sig_value_ci,s1,s2,print_summar
     ## 那么x和y必须进行动态修正和调整，使得非均衡状态尽量恢复到均衡状态。
     # 显著性测试(ECM)
     sig_1=test_significance(xdata,ydata,residuals1)
+    sig_1.summary()
     sig_2=test_significance(ydata,xdata,residuals2)
-        
         
     print("\nThe following is the regression result of the Error Correction model when {} is the independent and {} is the dependent variable".format(s1,s2))
     if print_summary:
@@ -243,4 +246,6 @@ def robustness(xdata,ydata,long_xdata,long_ydata,ci):
     else:
         print ("\nThe t-statistic is {} and the spread over 2 periods are not similar according to t-statistic test".format(t_statistic))
         print ("【FAIL】未通过稳健性测试! As co-integration is not significant, consider the use of Kalman Filters")
+    
+    return ecm_object.rsquared
 

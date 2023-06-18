@@ -1,6 +1,5 @@
 
 
-# %%
 # Importing Libraries
 import os
 from sklearn.linear_model import LinearRegression as lm 
@@ -35,10 +34,10 @@ from backtest import (
 )
 
 
-# %% settings
+# Settings
 
-name1 = 'ACC.NS'
-name2 = 'BOSCHLTD.NS'
+name1 = 'HINDALCO.NS'
+name2 = 'TATASTEEL.NS' 
 
 train_start = '2016-05-30'
 train_end = '2017-05-30'
@@ -57,23 +56,23 @@ if_use_kmf_when_cal_OU=True     # whether to use kalman filter when cal OU-proce
 
 if_train=True
 init_params = {
-    # Delta value for Kalman Filter for computing Cointegration Weight. Default is 0.0001
-    'delta_resid': 0.0001,
-    # Delta value for Kalman Filter for fitting to OU process. Default is 0.0001
-    'delta_ou': 0.0001,
-    # Number of standard deviations from the mean at which trade should be initiated
-    'entry_point': 0.7,
-    # The permissible slippage observed on residual spread: [Enter -999 for no slippage consideration]
-    'slippage': 0.1,
-    # The permissible stoploss observed on residual spread: [Enter -999 for no stoploss consideration]
+    # Delta value for Kalman Filter for computing Cointegration Weight. Default is 1e-4
+    'delta_resid': 1e-4,
+    # Delta value for Kalman Filter for fitting to OU process. Default is 1e-4
+    'delta_ou': 1e-4,
+    # Number of standard deviations from the mean at which trade should be initiated. Default is 1
+    'entry_point': 1,
+    # The permissible slippage observed on residual spread: [Enter -999 for no slippage consideration]. Default is 0.1
+    'slippage': 0.3,
+    # The permissible stoploss observed on residual spread: [Enter -999 for no stoploss consideration]. Default is 0.3
     'stoploss': 0.3,
     # The commission on executing a short trade: [Enter 0 for no commission consideration]
     'comm_short': 0.0002,
     # The commission on executing a long trade: [Enter 0 for no commission consideration]
     'comm_long': 0.0002,
-    # Risk free rate
-    'rfr': 0.0685,
-    # Maximum number of days a trade can last post the trade initiation: [Enter -999 for no maximum trade duration consideration]
+    # Risk free rate. Default is 0.0685
+    'rfr': 0,
+    # Maximum number of days a trade can last post the trade initiation: [Enter -999 for no maximum trade duration consideration]. Default is 45
     'max_trade_exit': 45
 }
 if_backtest=True
@@ -83,12 +82,12 @@ if_optimize=True
 # Average Profit, Win Ratio, Average Profit on Profitable Trades, Standard Deviation of Returns, Value at Risk, Expected Shortfall, Sharpe Ratio, 
 # Sortino Ratio, Cumulative Return, Market Alpha, Market Beta, HML Beta, SMB Beta, WML Beta, Momentum Beta,Fama French Four Factor Alpha
 optimize_params={
-    'delta_resid':     {'lower_bound': 1e-10,  'upper_bound': 1e-1,  'val': 50, 'optimization_criteria': 'Sharpe Ratio', 'direction': 'max', 'if_opt': True},
-    'delta_ou':        {'lower_bound': 1e-10,  'upper_bound': 1e-1,  'val': 50, 'optimization_criteria': 'Sharpe Ratio', 'direction': 'max', 'if_opt': True},  # 同时优化两个delta时，仅根据delta_resid的范围优化，delta_ou的参数无效
-    'entry_point':     {'lower_bound': 0.3,    'upper_bound': 1.5,   'val': 20, 'optimization_criteria': 'Sharpe Ratio', 'direction': 'max', 'if_opt': True},
-    'slippage':        {'lower_bound': 0.05,   'upper_bound': 0.3,   'val': 20, 'optimization_criteria': 'Sharpe Ratio', 'direction': 'max', 'if_opt': True},
-    'max_trade_exit':  {'lower_bound': 20,     'upper_bound': 50,    'val': 30, 'optimization_criteria': 'Sharpe Ratio', 'direction': 'max', 'if_opt': True},
-    'stoploss':        {'lower_bound': 0.15,   'upper_bound': 0.45,  'val': 20, 'optimization_criteria': 'Sharpe Ratio', 'direction': 'max', 'if_opt': True},
+    'delta_resid':     {'lower_bound': 1e-5,  'upper_bound': 5e-4,  'val': 100,  'optimization_criteria': 'Sharpe Ratio', 'direction': 'max', 'if_opt': True},
+    'delta_ou':        {'lower_bound': 1e-5,  'upper_bound': 5e-4,  'val': 100,  'optimization_criteria': 'Sharpe Ratio', 'direction': 'max', 'if_opt': True},  # 同时优化两个delta时，仅根据delta_resid的范围优化，delta_ou的参数无效
+    'entry_point':     {'lower_bound': 0.3,   'upper_bound': 2.5,   'val': 20,   'optimization_criteria': 'Sharpe Ratio', 'direction': 'max', 'if_opt': True},
+    'slippage':        {'lower_bound': 0.05,  'upper_bound': 0.5,   'val': 20,   'optimization_criteria': 'Sharpe Ratio', 'direction': 'max', 'if_opt': True},
+    'max_trade_exit':  {'lower_bound': 20,    'upper_bound': 50,    'val': 30,   'optimization_criteria': 'Sharpe Ratio', 'direction': 'max', 'if_opt': False},
+    'stoploss':        {'lower_bound': 0.1,   'upper_bound': 0.4,   'val': 20,   'optimization_criteria': 'Sharpe Ratio', 'direction': 'max', 'if_opt': True},
 }
 
 if_test=True
@@ -96,7 +95,6 @@ if_test_use_opt_params=True
 ####################################################################
 
 
-# %%
 def search_success_pairs():
     data_csv_names = [i for i in os.listdir('./data') if i not in ('ind_nifty100list.csv')]
     data_csv_names = [i for i in data_csv_names if pd.read_csv(os.path.join('./data', i))['Date'].min() < '2014-05-30']
@@ -108,14 +106,18 @@ def search_success_pairs():
 
         flag = trading_algorithm(pair[0][:-4], pair[1][:-4], if_train=False)
         if flag != False:
+            pair = list(pair)
+            pair.append(flag)
             success_pairs.append(pair)
 
     len(success_pairs)
-    pd.DataFrame(success_pairs).to_csv('success_pairs.csv', index=False)
+    pd.DataFrame(success_pairs, columns=['name1','name2','r2']).to_csv('success_pairs.csv', index=False)
+
+# search_success_pairs()
 
 
-# %%
 
+####################################################################
 # init_params['delta_resid'] = 1.e-10
 # init_params['delta_ou'] = 0.002223
 # init_params['entry_point'] = 0.5
@@ -123,13 +125,13 @@ def search_success_pairs():
 
 
 trading_algorithm(name1, name2, 
-                    train_start, train_end, adf_ci, sig_test_ci, 
-                    robust_start, robust_end, rob_ci, 
-                    test_start, test_end, 
-                    if_use_kmf_when_cal_res, if_use_kmf_when_cal_OU, 
-                    if_train, init_params, if_backtest, 
-                    if_optimize, optimize_params,
-                    if_test, if_test_use_opt_params
-                    )
-    
-# %%
+                train_start, train_end, adf_ci, sig_test_ci, 
+                robust_start, robust_end, rob_ci, 
+                test_start, test_end, 
+                if_train,
+                if_use_kmf_when_cal_res, if_use_kmf_when_cal_OU, 
+                init_params, if_backtest, 
+                if_optimize, optimize_params,
+                if_test, if_test_use_opt_params
+                )
+
